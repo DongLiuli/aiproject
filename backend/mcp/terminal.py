@@ -50,14 +50,6 @@ class TerminalMCP(MCPBase):
                 ]
             },
             {
-                "name": "run_command",
-                "description": "执行任意命令",
-                "parameters": [
-                    {"name": "command", "type": "string", "description": "要执行的命令"},
-                    {"name": "cwd", "type": "string", "description": "工作目录"}
-                ]
-            },
-            {
                 "name": "test",
                 "description": "运行测试",
                 "parameters": [
@@ -88,18 +80,19 @@ class TerminalMCP(MCPBase):
                 # 检查是否是 requirements.txt 路径
                 if package.endswith("requirements.txt"):
                     if os.path.exists(package):
-                        args.append(f"-r {package}")
+                        args.append("-r")
+                        args.append(package)
                     else:
                         return {"status": "error", "message": f"文件不存在: {package}"}
                 else:
                     args.append(package)
                 
                 result = subprocess.run(
-                    " ".join(args),
+                    args,
                     cwd=self.base_dir,
                     capture_output=True,
                     text=True,
-                    shell=True
+                    shell=False
                 )
                 return {
                     "status": "success" if result.returncode == 0 else "error",
@@ -119,11 +112,11 @@ class TerminalMCP(MCPBase):
                     args.append("-y")
                 
                 result = subprocess.run(
-                    " ".join(args),
+                    args,
                     cwd=self.base_dir,
                     capture_output=True,
                     text=True,
-                    shell=True
+                    shell=False
                 )
                 return {
                     "status": "success" if result.returncode == 0 else "error",
@@ -133,11 +126,11 @@ class TerminalMCP(MCPBase):
             
             elif command == "pip_list":
                 result = subprocess.run(
-                    "pip list",
+                    ["pip", "list"],
                     cwd=self.base_dir,
                     capture_output=True,
                     text=True,
-                    shell=True
+                    shell=False
                 )
                 if result.returncode == 0:
                     packages = []
@@ -152,7 +145,7 @@ class TerminalMCP(MCPBase):
             
             elif command == "run_python":
                 script_path = kwargs.get("script_path")
-                args = kwargs.get("args", "")
+                args_str = kwargs.get("args", "")
                 
                 if not script_path:
                     return {"status": "error", "message": "缺少参数: script_path"}
@@ -160,34 +153,16 @@ class TerminalMCP(MCPBase):
                 if not os.path.exists(script_path):
                     return {"status": "error", "message": f"脚本文件不存在: {script_path}"}
                 
-                full_command = f"python {script_path} {args}"
+                cmd_args = ["python", script_path]
+                if args_str:
+                    cmd_args.extend(args_str.split())
+                
                 result = subprocess.run(
-                    full_command,
+                    cmd_args,
                     cwd=self.base_dir,
                     capture_output=True,
                     text=True,
-                    shell=True,
-                    timeout=300
-                )
-                return {
-                    "status": "success" if result.returncode == 0 else "error",
-                    "data": result.stdout,
-                    "message": result.stderr if result.returncode != 0 else "执行成功"
-                }
-            
-            elif command == "run_command":
-                cmd = kwargs.get("command")
-                cwd = kwargs.get("cwd", self.base_dir)
-                
-                if not cmd:
-                    return {"status": "error", "message": "缺少参数: command"}
-                
-                result = subprocess.run(
-                    cmd,
-                    cwd=cwd,
-                    capture_output=True,
-                    text=True,
-                    shell=True,
+                    shell=False,
                     timeout=300
                 )
                 return {
@@ -201,20 +176,19 @@ class TerminalMCP(MCPBase):
                 verbose = kwargs.get("verbose", False)
                 
                 # 默认运行所有测试
+                cmd_args = ["python", "-m", "pytest"]
                 if test_path and os.path.exists(test_path):
-                    cmd = f"python -m pytest {test_path}"
-                else:
-                    cmd = "python -m pytest"
+                    cmd_args.append(test_path)
                 
                 if verbose:
-                    cmd += " -v"
+                    cmd_args.append("-v")
                 
                 result = subprocess.run(
-                    cmd,
+                    cmd_args,
                     cwd=self.base_dir,
                     capture_output=True,
                     text=True,
-                    shell=True,
+                    shell=False,
                     timeout=300
                 )
                 return {

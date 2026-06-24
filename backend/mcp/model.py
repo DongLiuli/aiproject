@@ -65,13 +65,6 @@ class ModelMCP(MCPBase):
                 "description": "查看模型状态",
                 "parameters": []
             },
-            {
-                "name": "run_python_code",
-                "description": "执行 Python 代码片段",
-                "parameters": [
-                    {"name": "code", "type": "string", "description": "Python 代码"}
-                ]
-            }
         ]
     
     def _ensure_model_loaded(self) -> bool:
@@ -231,37 +224,6 @@ class ModelMCP(MCPBase):
                     "model_loaded": self.model_loaded,
                     "model_type": "BGE" if self.model_loaded else None
                 }, "获取状态成功").to_dict()
-            
-            elif command == "run_python_code":
-                code = kwargs.get("code")
-                
-                if not code:
-                    return {"status": "error", "message": "缺少参数: code"}
-                
-                try:
-                    # 安全执行，限制危险操作
-                    local_vars = {}
-                    # 禁止导入危险模块
-                    forbidden_modules = ['os', 'subprocess', 'sys', 'shutil', 'glob']
-                    
-                    for mod in forbidden_modules:
-                        if f"import {mod}" in code or f"from {mod}" in code:
-                            return {"status": "error", "message": f"禁止导入危险模块: {mod}"}
-                    
-                    exec(code, globals(), local_vars)
-                    
-                    # 获取输出结果
-                    output = {}
-                    if 'result' in local_vars:
-                        output['result'] = local_vars['result']
-                    if '__builtins__' in local_vars:
-                        del local_vars['__builtins__']
-                    output.update(local_vars)
-                    
-                    return MCPSuccess(output, "代码执行成功").to_dict()
-                
-                except Exception as e:
-                    return {"status": "error", "message": f"代码执行失败: {str(e)}"}
             
             else:
                 return {"status": "error", "message": f"未知命令: {command}"}

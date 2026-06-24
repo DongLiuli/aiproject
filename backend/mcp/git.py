@@ -97,15 +97,15 @@ class GitMCP(MCPBase):
             }
         ]
     
-    def _run_git_command(self, cmd: str) -> Dict[str, Any]:
-        """执行 Git 命令"""
+    def _run_git_command(self, args: list) -> Dict[str, Any]:
+        """执行 Git 命令（安全版本）"""
         try:
             result = subprocess.run(
-                cmd,
+                args,
                 cwd=self.base_dir,
                 capture_output=True,
                 text=True,
-                shell=True
+                shell=False
             )
             if result.returncode == 0:
                 return {"status": "success", "data": result.stdout.strip(), "message": "执行成功"}
@@ -118,7 +118,7 @@ class GitMCP(MCPBase):
         command = command.lower().strip()
         
         if command == "init":
-            return self._run_git_command("git init")
+            return self._run_git_command(["git", "init"])
         
         elif command == "clone":
             url = kwargs.get("url")
@@ -127,14 +127,14 @@ class GitMCP(MCPBase):
             if not url:
                 return {"status": "error", "message": "缺少参数: url"}
             
-            return self._run_git_command(f"git clone -b {branch} {url}")
+            return self._run_git_command(["git", "clone", "-b", branch, url])
         
         elif command == "status":
-            return self._run_git_command("git status")
+            return self._run_git_command(["git", "status"])
         
         elif command == "add":
             files = kwargs.get("files", ".")
-            return self._run_git_command(f"git add {files}")
+            return self._run_git_command(["git", "add", files])
         
         elif command == "commit":
             message = kwargs.get("message")
@@ -143,18 +143,20 @@ class GitMCP(MCPBase):
             if not message:
                 return {"status": "error", "message": "缺少参数: message"}
             
-            amend_flag = "--amend" if amend else ""
-            return self._run_git_command(f"git commit {amend_flag} -m \"{message}\"")
+            args = ["git", "commit", "-m", message]
+            if amend:
+                args.insert(2, "--amend")
+            return self._run_git_command(args)
         
         elif command == "push":
             remote = kwargs.get("remote", "origin")
             branch = kwargs.get("branch", "main")
-            return self._run_git_command(f"git push {remote} {branch}")
+            return self._run_git_command(["git", "push", remote, branch])
         
         elif command == "pull":
             remote = kwargs.get("remote", "origin")
             branch = kwargs.get("branch", "main")
-            return self._run_git_command(f"git pull {remote} {branch}")
+            return self._run_git_command(["git", "pull", remote, branch])
         
         elif command == "config":
             user_name = kwargs.get("user.name")
@@ -163,11 +165,11 @@ class GitMCP(MCPBase):
             if not user_name or not user_email:
                 return {"status": "error", "message": "缺少参数: user.name 和 user.email"}
             
-            result1 = self._run_git_command(f"git config user.name \"{user_name}\"")
+            result1 = self._run_git_command(["git", "config", "user.name", user_name])
             if result1["status"] != "success":
                 return result1
             
-            result2 = self._run_git_command(f"git config user.email \"{user_email}\"")
+            result2 = self._run_git_command(["git", "config", "user.email", user_email])
             if result2["status"] != "success":
                 return result2
             
@@ -182,15 +184,15 @@ class GitMCP(MCPBase):
                 return {"status": "error", "message": "缺少参数: action"}
             
             if action == "list":
-                return self._run_git_command("git remote -v")
+                return self._run_git_command(["git", "remote", "-v"])
             elif action == "add":
                 if not name or not url:
                     return {"status": "error", "message": "缺少参数: name 和 url"}
-                return self._run_git_command(f"git remote add {name} {url}")
+                return self._run_git_command(["git", "remote", "add", name, url])
             elif action == "remove":
                 if not name:
                     return {"status": "error", "message": "缺少参数: name"}
-                return self._run_git_command(f"git remote remove {name}")
+                return self._run_git_command(["git", "remote", "remove", name])
             else:
                 return {"status": "error", "message": f"未知操作: {action}"}
         
@@ -201,17 +203,17 @@ class GitMCP(MCPBase):
             branch = kwargs.get("branch", "main")
             
             # 执行 add
-            add_result = self._run_git_command(f"git add {files}")
+            add_result = self._run_git_command(["git", "add", files])
             if add_result["status"] != "success":
                 return add_result
             
             # 执行 commit
-            commit_result = self._run_git_command(f"git commit -m \"{message}\"")
+            commit_result = self._run_git_command(["git", "commit", "-m", message])
             if commit_result["status"] != "success":
                 return commit_result
             
             # 执行 push
-            push_result = self._run_git_command(f"git push {remote} {branch}")
+            push_result = self._run_git_command(["git", "push", remote, branch])
             return push_result
         
         else:
