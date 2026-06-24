@@ -30,6 +30,8 @@ class User(Base):
     username = Column(String, nullable=True, unique=True)
     password_hash = Column(String, nullable=True)
     is_anonymous = Column(Boolean, default=False)
+    api_key_encrypted = Column(Text, nullable=True)
+    model_preference = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # 关联
