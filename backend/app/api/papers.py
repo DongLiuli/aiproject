@@ -75,8 +75,8 @@ async def upload_paper(
     db.add(paper)
     db.commit()
 
-    # 6. 触发异步解析（图省事先留空，Day3 接 B 的函数）
-    # background_tasks.add_task(run_parse_pipeline, paper_id)
+    # 6. 触发异步解析
+    background_tasks.add_task(_run_parse_pipeline, paper_id, user_id)
 
     return {
         "paper_id": paper_id,
@@ -213,3 +213,102 @@ def reparse_paper(paper_id: str, user_id: str = Depends(get_current_user)):
     db.commit()
 
     return {"paper_id": paper_id, "parse_status": "pending"}
+
+
+# ========== 异步解析管道 ==========
+import logging
+logger = logging.getLogger(__name__)
+
+
+def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
+    """后台异步解析：PDF 文本提取 → LLM 结构化抽取 → 知识库构建"""
+    db = next(get_db())
+    try:
+        paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+        if not paper:
+            return
+
+        paper.parse_status = "parsing"
+        db.commit()
+
+        # ① PDF 文本提取
+        from ai.pdf_parser import parse_pdf
+        parse_result = parse_pdf(paper.file_path)
+        if not parse_result.get("success"):
+            paper.parse_status = "failed"
+            paper.parse_error = parse_result.get("error", "PDF 解析失败")
+            db.commit()
+            return
+
+        full_text = parse_result.get("full_text", "")
+        sections = parse_result.get("sections", [])
+        figures_tables = parse_result.get("figures_tables", [])
+
+        # ② 获取用户 LLM 配置
+        user = db.query(User).filter(User.id == user_id).first()
+        api_key = user.api_key_encrypted if user else None
+        if not api_key:
+            paper.parse_status = "failed"
+            paper.parse_error = "未配置 API Key，请在设置页配置"
+            db.commit()
+            return
+
+        from ai.llm_client import LLMClient
+        llm_client = LLMClient(api_key=api_key)
+
+        # ③ 结构化信息抽取
+        from ai.info_extractor import extract_structured_info
+        info_data = extract_structured_info(full_text, sections, llm_client)
+        if not info_data.get("success"):
+            paper.parse_status = "failed"
+            paper.parse_error = info_data.get("error", "信息抽取失败")
+            db.commit()
+            return
+
+        # ④ 入库
+        info = PaperStructuredInfo(
+            paper_id=paper_id,
+            research_background=info_data.get("research_background"),
+            research_questions=info_data.get("research_questions"),
+            method_flow=info_data.get("method_flow"),
+            model_algorithm=info_data.get("model_algorithm"),
+            dataset_info=info_data.get("dataset_info"),
+            evaluation_metrics=info_data.get("evaluation_metrics"),
+            experiment_results=info_data.get("experiment_results"),
+            innovations=info_data.get("innovations"),
+            limitations=info_data.get("limitations"),
+            future_work=info_data.get("future_work"),
+            figures_tables=figures_tables,
+            full_text=full_text,
+            sections=sections,
+        )
+        db.add(info)
+
+        title = info_data.get("title") or paper.file_name
+        authors = info_data.get("authors")
+        paper.title = title
+        if authors:
+            paper.authors = authors
+        db.commit()
+
+        # ⑤ 知识库构建
+        from ai.knowledge_base import build_knowledge_base
+        kb_result = build_knowledge_base(paper_id, sections)
+        if kb_result.get("success"):
+            paper.parse_status = "completed"
+        else:
+            logger.warning(f"知识库构建警告: {kb_result.get('error')}")
+            paper.parse_status = "completed"
+            paper.parse_error = f"知识库部分: {kb_result.get('error')}"
+        db.commit()
+
+    except Exception as e:
+        logger.exception(f"解析异常: {e}")
+        try:
+            paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+            if paper:
+                paper.parse_status = "failed"
+                paper.parse_error = f"解析异常: {str(e)}"
+                db.commit()
+        except Exception:
+            pass
