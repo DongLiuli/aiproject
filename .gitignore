@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project runtime data
+backend/data/uploads/
+backend/data/vectors/
+backend/data/*.db

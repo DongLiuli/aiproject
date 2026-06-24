@@ -44,7 +44,7 @@ def generate_report_endpoint(paper_id: str, body: GenerateReportRequest, user_id
     if not result.get("success"):
         raise HTTPException(502, detail={"error": {"code": "REPORT_FAILED", "message": result.get("error", "报告生成失败")}})
 
-    content = result.get("report", "")
+    content = result.get("content", "")
 
     # 保存到数据库
     import uuid

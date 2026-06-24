@@ -3,6 +3,7 @@
 """
 import os
 import uuid
+import json
 from typing import Optional
 from datetime import datetime
 
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from ..config import UPLOAD_DIR, MAX_UPLOAD_SIZE
-from ..models import get_db, Paper, PaperStructuredInfo, Conversation, Message, Chunk, Report
+from ..models import get_db, User, Paper, PaperStructuredInfo, Conversation, Message, Chunk, Report
 from .auth import get_current_user
 
 router = APIRouter(prefix="/api/papers", tags=["论文管理"])
@@ -198,19 +199,23 @@ def delete_paper(paper_id: str, user_id: str = Depends(get_current_user)):
 
 
 @router.post("/{paper_id}/reparse")
-def reparse_paper(paper_id: str, user_id: str = Depends(get_current_user)):
-    """重新触发解析（把状态重置为 pending）"""
+def reparse_paper(paper_id: str, background_tasks: BackgroundTasks, user_id: str = Depends(get_current_user)):
+    """重新触发后台解析"""
     db = next(get_db())
     paper = db.query(Paper).filter(Paper.paper_id == paper_id, Paper.user_id == user_id).first()
     if not paper:
         raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
 
+    # 如果长时间卡在 parsing（异常吞没），允许重新触发
     if paper.parse_status == "parsing":
-        raise HTTPException(400, detail={"error": {"code": "ALREADY_PARSING", "message": "论文正在解析中，请稍后重试"}})
+        paper.parse_status = "pending"
+        paper.parse_error = "上次解析异常中断，已重置"
 
     paper.parse_status = "pending"
     paper.parse_error = None
     db.commit()
+
+    background_tasks.add_task(_run_parse_pipeline, paper_id, user_id)
 
     return {"paper_id": paper_id, "parse_status": "pending"}
 
@@ -265,7 +270,13 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
             db.commit()
             return
 
-        # ④ 入库
+        # ④ 入库（list/dict 字段用 json.dumps 序列化，兼容 Text 列）
+        def _safe_json(val):
+            """如果不是字符串也不是 None，序列化为 JSON 字符串"""
+            if val is None or isinstance(val, str):
+                return val
+            return json.dumps(val, ensure_ascii=False)
+
         info = PaperStructuredInfo(
             paper_id=paper_id,
             research_background=info_data.get("research_background"),
@@ -273,14 +284,14 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
             method_flow=info_data.get("method_flow"),
             model_algorithm=info_data.get("model_algorithm"),
             dataset_info=info_data.get("dataset_info"),
-            evaluation_metrics=info_data.get("evaluation_metrics"),
-            experiment_results=info_data.get("experiment_results"),
-            innovations=info_data.get("innovations"),
-            limitations=info_data.get("limitations"),
-            future_work=info_data.get("future_work"),
-            figures_tables=figures_tables,
+            evaluation_metrics=_safe_json(info_data.get("evaluation_metrics")),
+            experiment_results=_safe_json(info_data.get("experiment_results")),
+            innovations=_safe_json(info_data.get("innovations")),
+            limitations=_safe_json(info_data.get("limitations")),
+            future_work=_safe_json(info_data.get("future_work")),
+            figures_tables=_safe_json(figures_tables),
             full_text=full_text,
-            sections=sections,
+            sections=_safe_json(sections),
         )
         db.add(info)
 
