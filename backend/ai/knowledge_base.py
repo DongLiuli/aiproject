@@ -130,14 +130,21 @@ def search_chunks(paper_id: str, query: str, k: int = 5) -> List[Dict[str, Any]]
         k = min(k, SEARCH_CONFIG["top_k"])
         distances, indices = index.search(np.array(query_embedding), k)
         
-        # 获取分块内容（需要从数据库查询，这里先返回模拟数据）
+        # 从数据库查询分块内容
+        from ..app.models import get_db, Chunk
+        db = next(get_db())
+        
+        # 获取所有分块并按索引位置排序
+        chunks = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.id).all()
+        
         results = []
         for i, idx in enumerate(indices[0]):
-            if idx >= 0:
+            if idx >= 0 and idx < len(chunks):
+                chunk = chunks[idx]
                 results.append({
-                    "content": f"分块内容摘要...",
-                    "section_title": "未知章节",
-                    "page": 1,
+                    "content": chunk.content,
+                    "section_title": chunk.section_title,
+                    "page": chunk.page_number,
                     "score": float(1 - distances[0][i] / 2)  # 转换为相似度分数
                 })
         

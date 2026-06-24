@@ -26,6 +26,11 @@ class UpdateConfigRequest(BaseModel):
     model: Optional[str] = None
 
 
+class TestConfigRequest(BaseModel):
+    api_key: str
+    model: Optional[str] = "deepseek-chat"
+
+
 # ========== 接口 ==========
 
 @router.get("/me")
@@ -90,16 +95,10 @@ def update_user_config(body: UpdateConfigRequest, user_id: str = Depends(get_cur
 
 
 @router.post("/config/test")
-def test_api_connection(user_id: str = Depends(get_current_user)):
+def test_api_connection(body: TestConfigRequest, user_id: str = Depends(get_current_user)):
     """测试 API Key 连接"""
-    db = next(get_db())
-    user = db.query(User).filter(User.id == user_id).first()
-
-    if not user or not user.api_key_encrypted:
-        return {"ok": False, "error": "API Key 未配置"}
-
     from ai.llm_client import LLMClient
-    client = LLMClient(api_key=user.api_key_encrypted)
+    client = LLMClient(api_key=body.api_key, provider="deepseek")
     result = client.test_connection()
 
     if result["success"]:
