@@ -1,0 +1,27 @@
+你是一位科研论文分析专家。请分析以下论文内容，并提取结构化信息。
+
+论文内容：
+{full_text}
+
+请按照以下 JSON 格式输出：
+{{
+    "title": "论文标题",
+    "authors": ["作者1", "作者2"],
+    "research_background": "研究背景和问题陈述",
+    "research_questions": "研究问题和研究目标",
+    "method_flow": "方法流程描述",
+    "model_algorithm": "模型算法细节",
+    "dataset_info": "数据集信息（名称、规模、来源）",
+    "evaluation_metrics": ["指标1", "指标2", "指标3"],
+    "experiment_results": "实验结果总结",
+    "innovations": ["创新点1", "创新点2", "创新点3"],
+    "limitations": ["局限性1", "局限性2"],
+    "future_work": "未来工作方向",
+    "keywords": ["关键词1", "关键词2", "关键词3"]
+}}
+
+输出要求：
+1. 严格按照 JSON 格式输出，不要包含任何其他文本
+2. 如果某些字段无法从论文中提取，请设为空字符串或空数组
+3. evaluation_metrics、innovations、limitations、keywords 必须是数组格式
+4. 使用中文输出
