@@ -306,6 +306,16 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         from ai.knowledge_base import build_knowledge_base
         kb_result = build_knowledge_base(paper_id, sections)
         if kb_result.get("success"):
+            # 将分块数据写入 chunks 表，供 search_chunks 检索
+            for c in kb_result.get("chunks", []):
+                chunk = Chunk(
+                    paper_id=c["paper_id"],
+                    section_title=c["section_title"],
+                    page_number=c["page_number"],
+                    paragraph_index=c["paragraph_index"],
+                    content=c["content"],
+                )
+                db.add(chunk)
             paper.parse_status = "completed"
         else:
             logger.warning(f"知识库构建警告: {kb_result.get('error')}")
