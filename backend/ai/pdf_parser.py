@@ -155,14 +155,16 @@ def parse_pdf(file_path: str) -> Dict[str, Any]:
             "page_end": len(doc)
         })
     
-    doc.close()
-    
     # 9. 验证解析结果
     if not sections and not full_text.strip():
+        doc.close()
         return {
             "success": False,
             "error": "PDF 文件似乎没有可提取的文本内容"
         }
+    
+    page_count = len(doc)
+    doc.close()
     
     return {
         "success": True,
@@ -170,7 +172,7 @@ def parse_pdf(file_path: str) -> Dict[str, Any]:
         "sections": sections,
         "figures_tables": figures_tables,
         "references_raw": references_raw.strip(),
-        "page_count": len(doc)
+        "page_count": page_count
     }
 
 
