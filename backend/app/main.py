@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import UPLOAD_DIR, VECTOR_DIR, DATA_DIR
 from .models import engine, Base
 from .api.auth import router as auth_router
+from .api.papers import router as papers_router
 
 app = FastAPI(title="科研文献智能解析与知识服务系统", version="0.1.0")
 
@@ -31,6 +32,7 @@ def on_startup():
 
 # 注册路由
 app.include_router(auth_router)
+app.include_router(papers_router)
 
 
 @app.get("/")
