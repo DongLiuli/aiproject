@@ -60,6 +60,37 @@ tr:hover { background:#f9fafb; }
 .toast-error { background:#fee2e2; color:#dc2626; }
 @keyframes slideIn { from { transform:translateX(100%); opacity:0; } to { transform:translateX(0); opacity:1; } }
 .empty { text-align:center; padding:40px; color:#9ca3af; }
+/* 数据浏览器样式 */
+.subtab-nav { display:flex; gap:0; margin-bottom:20px; border-bottom:2px solid #e5e7eb; }
+.subtab-item { padding:10px 20px; cursor:pointer; font-size:0.875rem; color:#6b7280; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all 0.15s; }
+.subtab-item:hover { color:#4f46e5; }
+.subtab-item.active { color:#4f46e5; border-bottom-color:#4f46e5; font-weight:600; }
+.browser-layout { display:flex; gap:20px; min-height:500px; }
+.table-selector { width:240px; flex-shrink:0; background:#f9fafb; border-radius:8px; padding:12px; overflow-y:auto; max-height:600px; }
+.table-selector h4 { font-size:0.8125rem; color:#6b7280; margin-bottom:8px; text-transform:uppercase; }
+.table-option { display:block; width:100%; padding:8px 12px; text-align:left; border:none; background:transparent; cursor:pointer; border-radius:6px; font-size:0.875rem; margin-bottom:2px; transition:all 0.1s; color:#374151; }
+.table-option:hover { background:#e5e7eb; }
+.table-option.active { background:#4f46e5; color:#fff; }
+.table-option .row-count { float:right; font-size:0.75rem; color:#9ca3af; }
+.table-option.active .row-count { color:rgba(255,255,255,0.7); }
+.data-area { flex:1; overflow-x:auto; }
+.data-table { width:100%; border-collapse:collapse; font-size:0.8125rem; }
+.data-table th { position:sticky; top:0; z-index:10; }
+.data-table td { max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.data-table td:hover { overflow:visible; white-space:normal; word-break:break-all; }
+.data-table input[type="text"] { width:100%; padding:4px 6px; border:1px solid #4f46e5; border-radius:4px; font-size:0.8125rem; outline:none; }
+.data-table tr.editing-row { background:#eef2ff; }
+.toolbar { display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+.toolbar .btn { font-size:0.8125rem; padding:6px 14px; }
+.column-info { font-size:0.75rem; color:#9ca3af; margin-top:4px; }
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:2000; }
+.modal-box { background:#fff; border-radius:12px; padding:24px; width:500px; max-height:80vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
+.modal-box h3 { margin-bottom:16px; }
+.form-row { display:flex; gap:8px; align-items:center; margin-bottom:10px; }
+.form-row label { width:120px; flex-shrink:0; font-size:0.8125rem; color:#6b7280; text-align:right; }
+.form-row input, .form-row textarea { flex:1; padding:6px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:0.8125rem; }
+.form-row textarea { min-height:60px; font-family:monospace; }
+.pagination .btn { padding:4px 10px; font-size:0.75rem; }
 </style>
 </head>
 <body>
@@ -190,7 +221,7 @@ async function renderTab() {
   if (currentTab === 'stats') c.innerHTML = await renderStats();
   else if (currentTab === 'papers') c.innerHTML = await renderPapers();
   else if (currentTab === 'users') c.innerHTML = await renderUsers();
-  else if (currentTab === 'db') c.innerHTML = await renderDB();
+  else if (currentTab === 'db') { c.innerHTML = await renderDB(); await renderDBSubContent(); }
 }
 
 // ========== 统计 ==========
@@ -310,14 +341,43 @@ async function deleteUser(uid) {
 }
 
 // ========== 数据库 ==========
+let dbSubTab = 'overview'; // 'overview' | 'browse'
+let browserTable = null;
+let browserData = null;       // { items, columns, pk, page, total, size }
+let editingRowId = null;
+let editingValues = {};
+
 async function renderDB() {
+  return `
+    <div class="card">
+      <div class="subtab-nav">
+        <div class="subtab-item ${dbSubTab === 'overview' ? 'active' : ''}" onclick="dbSubTab='overview';renderTab()">📋 数据库概况</div>
+        <div class="subtab-item ${dbSubTab === 'browse' ? 'active' : ''}" onclick="dbSubTab='browse';renderTab()">🔍 数据浏览</div>
+      </div>
+      <div id="dbSubContent"></div>
+    </div>`;
+}
+
+// 由 renderTab 更新后调用
+async function renderDBSubContent() {
+  const el = document.getElementById('dbSubContent');
+  if (!el) return;
+  if (dbSubTab === 'overview') el.innerHTML = await renderDBOverview();
+  else if (dbSubTab === 'browse') el.innerHTML = await renderDBBrowser();
+  // 如果浏览器已选了表，再加载数据
+  if (dbSubTab === 'browse' && browserTable) await loadBrowserTable();
+}
+
+async function renderDBOverview() {
   let infoHtml = '';
   try {
-    const info = await api('GET', '/api/admin/db/info');
+    const info = await api('GET', '/api/admin/db/tables');
     infoHtml = `<p style="margin-bottom:8px"><strong>数据库文件：</strong>${info.database_file}</p>
     <p style="margin-bottom:16px"><strong>大小：</strong>${info.size_mb}</p>
-    <div class="table-wrap"><table><thead><tr><th>表名</th><th>行数</th></tr></thead><tbody>
-    ${info.tables.map(t => `<tr><td>${t.name}</td><td>${t.rows}</td></tr>`).join('')}
+    <div class="table-wrap"><table><thead><tr><th>表名</th><th>行数</th><th>列数</th></tr></thead><tbody>
+    ${info.tables.map(t => `<tr style="cursor:pointer" onclick="dbSubTab='browse';browserTable='${t.name}';renderTab()">
+      <td style="color:#4f46e5;font-weight:500">${t.name}</td><td>${t.rows}</td><td>${t.columns.length}</td>
+    </tr>`).join('')}
     </tbody></table></div>`;
   } catch(e) { infoHtml = `<p>加载失败: ${e.message}</p>`; }
 
@@ -326,30 +386,258 @@ async function renderDB() {
     const b = await api('GET', '/api/admin/db/backups');
     if (b.backups.length === 0) backupHtml = '<p style="color:#9ca3af">暂无备份</p>';
     else {
-      backupHtml = '<div class="table-wrap"><table><thead><tr><th>文件名</th><th>大小</th><th>时间</th></tr></thead><tbody>';
+      backupHtml = '<div class="table-wrap"><table><thead><tr><th>文件名</th><th>大小</th><th>时间</th><th>操作</th></tr></thead><tbody>';
       for (const f of b.backups) {
-        backupHtml += `<tr><td>${f.filename}</td><td>${f.size_mb}</td><td>${f.modified_at?.substring(0,19)}</td></tr>`;
+        backupHtml += `<tr><td>${f.filename}</td><td>${f.size_mb}</td><td>${f.modified_at?.substring(0,19)}</td>
+          <td><button class="btn btn-outline" style="padding:4px 10px;font-size:0.75rem" onclick="restoreDB('${f.filename}')">恢复</button></td></tr>`;
       }
       backupHtml += '</tbody></table></div>';
     }
   } catch(e) { backupHtml = `<p>加载失败: ${e.message}</p>`; }
 
   return `
-    <div class="card"><h3>数据库信息</h3>${infoHtml}</div>
-    <div class="card"><h3>备份管理</h3>
-      <div style="margin-bottom:16px;display:flex;gap:12px;">
-        <button class="btn btn-primary" onclick="backupDB()">立即备份</button>
-        <button class="btn btn-danger" onclick="cleanOldData()">清理旧数据（30天外失败论文）</button>
+    <h4 style="margin-bottom:12px;">表结构概览 <span style="font-size:0.75rem;color:#9ca3af;">（点击表名跳转数据浏览）</span></h4>${infoHtml}
+    <hr style="margin:20px 0;border-color:#e5e7eb;" />
+    <h4 style="margin-bottom:12px;">备份管理</h4>
+    <div style="margin-bottom:16px;display:flex;gap:12px;">
+      <button class="btn btn-primary" onclick="backupDB()">立即备份</button>
+      <button class="btn btn-danger" onclick="cleanOldData()">清理旧数据（30天外失败论文）</button>
+    </div>
+    ${backupHtml}`;
+}
+
+async function restoreDB(filename) {
+  if (!confirm(`确定从备份 ${filename} 恢复？当前数据库将被覆盖！`)) return;
+  try {
+    const d = await api('POST', '/api/admin/db/restore', {filename});
+    toast('恢复成功！请重启服务器使数据库生效');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ========== 数据浏览器 ==========
+
+async function renderDBBrowser() {
+  let tablesHtml = '';
+  try {
+    const info = await api('GET', '/api/admin/db/tables');
+    tablesHtml = info.tables.map(t => `
+      <button class="table-option${browserTable === t.name ? ' active' : ''}" onclick="browserTable='${t.name}';editingRowId=null;loadBrowserTable()">
+        ${t.name} <span class="row-count">${t.rows}行</span>
+      </button>`).join('');
+  } catch(e) { tablesHtml = `<p style="color:#ef4444;">${e.message}</p>`; }
+
+  return `
+    <div class="browser-layout">
+      <div class="table-selector">
+        <h4>📦 表列表</h4>
+        ${tablesHtml}
       </div>
-      ${backupHtml}
+      <div class="data-area" id="dataArea">
+        ${browserTable ? '<p style="color:#9ca3af;text-align:center;padding:60px;">加载中…</p>' : '<div class="empty">← 左侧选择一张表开始浏览</div>'}
+      </div>
     </div>`;
+}
+
+async function loadBrowserTable() {
+  const area = document.getElementById('dataArea');
+  if (!area || !browserTable) return;
+
+  try {
+    const page = browserData && browserData.table === browserTable ? browserData.page : 1;
+    browserTable = browserTable; // ensure
+    browserData = await api('GET', `/api/admin/db/table/${browserTable}?page=${page}&size=20`);
+
+    const cols = browserData.columns;
+    const total = browserData.total;
+    const maxPage = Math.ceil(total / browserData.size) || 1;
+    area.innerHTML = buildDataTable(browserData);
+
+    // bind events
+    bindBrowserEvents();
+  } catch(e) {
+    area.innerHTML = `<div class="empty">加载失败: ${e.message}</div>`;
+  }
+}
+
+function buildDataTable(data) {
+  const cols = data.columns;
+  const pk = data.pk;
+  let html = '';
+
+  // 工具栏
+  html += `<div class="toolbar">
+    <span style="font-weight:600;font-size:1rem;">${data.table}</span>
+    <span class="column-info">${cols.length}列 · ${data.total}行</span>
+    <button class="btn btn-primary" onclick="showAddRowModal()">➕ 添加行</button>
+    <button class="btn btn-outline" style="margin-left:auto" onclick="loadBrowserTable()">🔄 刷新</button>
+  </div>`;
+
+  // 表格
+  html += '<div class="table-wrap"><table class="data-table"><thead><tr>';
+  html += '<th style="width:32px">#</th>';
+  for (const c of cols) {
+    const pkMark = (c.pk) ? ' 🔑' : '';
+    html += `<th title="${c.type}${c.pk ? ' (主键)' : ''}${c.nullable ? '' : ' NOT NULL'}">${c.name}${pkMark}</th>`;
+  }
+  html += '<th style="width:80px">操作</th>';
+  html += '</tr></thead><tbody>';
+
+  if (data.items.length === 0) {
+    html += `<tr><td colspan="${cols.length + 2}" style="text-align:center;color:#9ca3af;padding:30px;">此表暂无数据</td></tr>`;
+  }
+
+  for (let i = 0; i < data.items.length; i++) {
+    const row = data.items[i];
+    const rowId = row[pk];
+    const isEditing = editingRowId === String(rowId);
+    html += `<tr class="${isEditing ? 'editing-row' : ''}" id="row-${encodeURIComponent(rowId)}">`;
+    html += `<td style="color:#9ca3af;font-size:0.75rem;">${(data.page - 1) * data.size + i + 1}</td>`;
+
+    for (const c of cols) {
+      let val = row[c.name];
+      if (val === null || val === undefined) val = '';
+      else if (typeof val === 'object') val = JSON.stringify(val);
+      else val = String(val);
+
+      if (isEditing && !c.pk) {
+        const isLong = val.length > 80;
+        html += `<td>${isLong
+          ? `<textarea onchange="editingValues['${c.name}']=this.value" style="width:100%;min-height:50px;font-size:0.75rem;border:1px solid #4f46e5;border-radius:4px;padding:4px;font-family:monospace;">${escHtml(val)}</textarea>`
+          : `<input type="text" value="${escAttr(val)}" onchange="editingValues['${c.name}']=this.value" />`}</td>`;
+      } else {
+        const display = val.length > 100 ? val.substring(0, 100) + '…' : val;
+        html += `<td title="${escAttr(val)}" style="${isEditing && c.pk ? 'background:#e5e7eb;' : ''}">${escHtml(display)}</td>`;
+      }
+    }
+
+    html += '<td style="white-space:nowrap">';
+    if (isEditing) {
+      html += `<button class="btn btn-primary" style="padding:2px 10px;font-size:0.75rem;margin-right:4px" onclick="saveRow('${escAttr(rowId)}')">保存</button>`;
+      html += `<button class="btn btn-outline" style="padding:2px 10px;font-size:0.75rem" onclick="cancelEditRow()">取消</button>`;
+    } else {
+      html += `<button class="btn btn-outline" style="padding:2px 10px;font-size:0.75rem;margin-right:4px" onclick="editRow('${escAttr(rowId)}')">编辑</button>`;
+      html += `<button class="btn btn-danger" style="padding:2px 10px;font-size:0.75rem" onclick="deleteRow('${escAttr(rowId)}')">删除</button>`;
+    }
+    html += '</td></tr>';
+  }
+
+  html += '</tbody></table></div>';
+
+  // 分页
+  const maxPage = Math.ceil(data.total / data.size) || 1;
+  html += `<div class="pagination">
+    <button class="btn btn-outline" ${data.page <= 1 ? 'disabled' : ''} onclick="browserData.page=1;loadBrowserTable()">首页</button>
+    <button class="btn btn-outline" ${data.page <= 1 ? 'disabled' : ''} onclick="browserData.page=${data.page - 1};loadBrowserTable()">上一页</button>
+    <span>${data.page} / ${maxPage}（共 ${data.total} 行）</span>
+    <button class="btn btn-outline" ${data.page >= maxPage ? 'disabled' : ''} onclick="browserData.page=${data.page + 1};loadBrowserTable()">下一页</button>
+    <button class="btn btn-outline" ${data.page >= maxPage ? 'disabled' : ''} onclick="browserData.page=${maxPage};loadBrowserTable()">末页</button>
+  </div>`;
+
+  return html;
+}
+
+function bindBrowserEvents() {
+  // Nothing extra needed; events are inline onclick
+}
+
+// ========== 行操作 ==========
+
+function editRow(rowId) {
+  editingRowId = String(rowId);
+  editingValues = {};
+  // pre-fill with current values
+  const row = browserData.items.find(r => String(r[browserData.pk]) === editingRowId);
+  if (row) {
+    for (const c of browserData.columns) {
+      if (!c.pk) editingValues[c.name] = row[c.name] ?? '';
+    }
+  }
+  loadBrowserTable();
+}
+
+function cancelEditRow() {
+  editingRowId = null;
+  editingValues = {};
+  loadBrowserTable();
+}
+
+async function saveRow(rowId) {
+  try {
+    await api('PUT', `/api/admin/db/table/${browserTable}/${encodeURIComponent(rowId)}`, editingValues);
+    toast('保存成功');
+    editingRowId = null;
+    editingValues = {};
+    loadBrowserTable();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteRow(rowId) {
+  if (!confirm(`确定删除 ${browserData.pk}=${rowId} 这条记录吗？此操作不可恢复！`)) return;
+  try {
+    await api('DELETE', `/api/admin/db/table/${browserTable}/${encodeURIComponent(rowId)}`);
+    toast('已删除');
+    loadBrowserTable();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ========== 添加行模态框 ==========
+
+function showAddRowModal() {
+  const cols = browserData.columns.filter(c => !c.pk);
+  let fieldsHtml = cols.map(c => {
+    const isLong = c.type === 'TEXT' || c.type === 'text';
+    return `<div class="form-row">
+      <label>${c.name} <span style="font-size:0.7rem;color:#9ca3af">(${c.type})</span></label>
+      ${isLong
+        ? `<textarea id="add_fld_${c.name}" placeholder="${c.nullable ? '可为空' : '必填'}"></textarea>`
+        : `<input type="text" id="add_fld_${c.name}" placeholder="${c.nullable ? '可为空' : '必填'}" />`}
+    </div>`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'addRowModal';
+  overlay.innerHTML = `<div class="modal-box">
+    <h3>新增行 — ${browserTable}</h3>
+    <p style="font-size:0.75rem;color:#9ca3af;margin-bottom:12px;">主键 ${browserData.pk} 将由系统自动生成</p>
+    ${fieldsHtml}
+    <div style="margin-top:16px;display:flex;gap:12px;justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="document.getElementById('addRowModal').remove()">取消</button>
+      <button class="btn btn-primary" onclick="doAddRow()">确认添加</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function doAddRow() {
+  const cols = browserData.columns.filter(c => !c.pk);
+  const body = {};
+  for (const c of cols) {
+    const el = document.getElementById('add_fld_' + c.name);
+    if (el && el.value.trim()) {
+      body[c.name] = el.value.trim();
+    }
+  }
+  try {
+    await api('POST', `/api/admin/db/table/${browserTable}`, body);
+    toast('添加成功');
+    document.getElementById('addRowModal').remove();
+    loadBrowserTable();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAttr(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 async function backupDB() {
   try {
     const d = await api('POST', '/api/admin/db/backup');
     toast(`备份成功: ${d.backup_path}`);
-    renderTab();
+    if (dbSubTab === 'overview') renderDBSubContent();
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -358,7 +646,7 @@ async function cleanOldData() {
   try {
     const d = await api('POST', '/api/admin/db/clean', {days:30});
     toast(`已清理 ${d.papers_deleted} 篇失败论文，释放 ${d.freed_mb}`);
-    renderTab();
+    if (dbSubTab === 'overview') renderDBSubContent();
   } catch(e) { toast(e.message, 'error'); }
 }
 </script>

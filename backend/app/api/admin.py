@@ -6,6 +6,7 @@ import os
 import uuid
 import shutil
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -318,12 +319,23 @@ def get_db_info(admin_id: str = Depends(get_current_admin)):
     """数据库信息：表列表、行数、文件大小"""
     db = next(get_db())
     from sqlalchemy import text
+    # 增强版表列表（含列定义）
     tables = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")).fetchall()
     table_info = []
     for t in tables:
         name = t[0]
         count = db.execute(text(f"SELECT COUNT(*) FROM [{name}]")).scalar()
-        table_info.append({"name": name, "rows": count})
+        cols = db.execute(text(f"PRAGMA table_info([{name}])")).fetchall()
+        columns = []
+        for c in cols:
+            col_info = {
+                "name": c[1],
+                "type": c[2] or "TEXT",
+                "nullable": not c[3],
+                "pk": bool(c[5]),
+            }
+            columns.append(col_info)
+        table_info.append({"name": name, "rows": count, "columns": columns})
     return {
         "database_file": os.path.join(DATA_DIR, "literature.db"),
         "size_bytes": _get_db_size(),
@@ -428,6 +440,215 @@ def clean_old_data(days: int = 30, admin_id: str = Depends(get_current_admin)):
         "freed_bytes": freed_bytes,
         "freed_mb": f"{freed_bytes / 1024 / 1024:.2f} MB",
     }
+
+
+# ========== 通用数据浏览器 CRUD ==========
+
+db_logger = logging.getLogger("admin.db_crud")
+
+# 需屏蔽的敏感列：表名 -> 列名列表
+_SENSITIVE_COLUMNS = {
+    "admins": ["password_hash"],
+    "users": ["password_hash", "api_key_encrypted"],
+}
+
+
+def _get_table_columns(db, table_name: str) -> list[dict]:
+    """获取表的所有列信息，排除敏感列"""
+    from sqlalchemy import text
+    cols = db.execute(text(f"PRAGMA table_info([{table_name}])")).fetchall()
+    sensitive = _SENSITIVE_COLUMNS.get(table_name, [])
+    result = []
+    for c in cols:
+        col_name = c[1]
+        if col_name in sensitive:
+            continue
+        result.append({
+            "name": col_name,
+            "type": c[2] or "TEXT",
+            "nullable": not c[3],
+            "pk": bool(c[5]),
+        })
+    return result
+
+
+def _get_primary_key(db, table_name: str) -> str:
+    """返回表的主键列名，没有则返回第一列"""
+    from sqlalchemy import text
+    cols = db.execute(text(f"PRAGMA table_info([{table_name}])")).fetchall()
+    for c in cols:
+        if c[5]:
+            return c[1]
+    return cols[0][1] if cols else "id"
+
+
+def _validate_table(db, table_name: str):
+    """校验表名是否在数据库中（防止 SQL 注入）"""
+    from sqlalchemy import text
+    existing = db.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name=:name"),
+        {"name": table_name}
+    ).fetchone()
+    if not existing:
+        raise HTTPException(404, detail={"error": {"code": "TABLE_NOT_FOUND", "message": f"表不存在: {table_name}"}})
+
+
+@router.get("/db/tables")
+def get_db_tables(admin_id: str = Depends(get_current_admin)):
+    """获取所有表的结构信息（增强版：含列定义 + 行数）"""
+    db = next(get_db())
+    from sqlalchemy import text
+    tables = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")).fetchall()
+    table_info = []
+    for t in tables:
+        name = t[0]
+        count = db.execute(text(f"SELECT COUNT(*) FROM [{name}]")).scalar()
+        cols = _get_table_columns(db, name)
+        table_info.append({"name": name, "rows": count, "columns": cols})
+    return {
+        "database_file": os.path.join(DATA_DIR, "literature.db"),
+        "size_bytes": _get_db_size(),
+        "size_mb": f"{_get_db_size() / 1024 / 1024:.2f} MB",
+        "tables": table_info,
+    }
+
+
+@router.get("/db/table/{table_name}")
+def get_table_rows(
+    table_name: str,
+    page: int = 1,
+    size: int = 50,
+    admin_id: str = Depends(get_current_admin),
+):
+    """查看一张表的所有行（分页），敏感列自动屏蔽"""
+    db = next(get_db())
+    from sqlalchemy import text
+    _validate_table(db, table_name)
+    columns = _get_table_columns(db, table_name)
+    col_names = [c["name"] for c in columns]
+    pk = _get_primary_key(db, table_name)
+
+    # 查询总数
+    total = db.execute(text(f"SELECT COUNT(*) FROM [{table_name}]")).scalar()
+
+    # 分页查询
+    offset = (page - 1) * size
+    rows = db.execute(
+        text(f"SELECT * FROM [{table_name}] ORDER BY [{pk}] DESC LIMIT :limit OFFSET :offset"),
+        {"limit": size, "offset": offset}
+    ).fetchall()
+
+    # 组装结果
+    items = []
+    for row in rows:
+        item = {}
+        for i, col_name in enumerate(col_names):
+            val = row[i] if i < len(row) else None
+            # JSON 字段尝试反序列化，方便前端展示
+            if isinstance(val, str) and (val.startswith("{") or val.startswith("[")):
+                try:
+                    val = json.loads(val)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            item[col_name] = val
+        items.append(item)
+
+    return {
+        "table": table_name,
+        "columns": columns,
+        "pk": pk,
+        "items": items,
+        "total": total,
+        "page": page,
+        "size": size,
+    }
+
+
+@router.post("/db/table/{table_name}")
+def insert_table_row(
+    table_name: str,
+    body: dict,
+    admin_id: str = Depends(get_current_admin),
+):
+    """新增一行数据"""
+    db = next(get_db())
+    from sqlalchemy import text
+    _validate_table(db, table_name)
+    columns = _get_table_columns(db, table_name)
+    col_names = {c["name"] for c in columns}
+
+    # 只接受有效列的值
+    insert_data = {k: v for k, v in body.items() if k in col_names}
+    if not insert_data:
+        raise HTTPException(400, detail={"error": {"code": "NO_VALID_COLUMNS", "message": "没有有效的列数据"}})
+
+    # 参数化 SQL
+    cols_sql = ", ".join(f"[{k}]" for k in insert_data.keys())
+    vals_sql = ", ".join(f":{k}" for k in insert_data.keys())
+    sql = f"INSERT INTO [{table_name}] ({cols_sql}) VALUES ({vals_sql})"
+    db.execute(text(sql), insert_data)
+    db.commit()
+
+    db_logger.info(f"管理员 {admin_id} 在 [{table_name}] 中新增了 1 行: {insert_data}")
+    return {"inserted": True, "data": insert_data}
+
+
+@router.put("/db/table/{table_name}/{row_id}")
+def update_table_row(
+    table_name: str,
+    row_id: str,
+    body: dict,
+    admin_id: str = Depends(get_current_admin),
+):
+    """修改一行数据"""
+    db = next(get_db())
+    from sqlalchemy import text
+    _validate_table(db, table_name)
+    columns = _get_table_columns(db, table_name)
+    col_names = {c["name"] for c in columns}
+    pk = _get_primary_key(db, table_name)
+
+    # 不允许修改主键
+    body.pop(pk, None)
+    update_data = {k: v for k, v in body.items() if k in col_names}
+    if not update_data:
+        raise HTTPException(400, detail={"error": {"code": "NO_VALID_COLUMNS", "message": "没有有效的列数据"}})
+
+    # 构建 SET 子句
+    set_sql = ", ".join(f"[{k}] = :{k}" for k in update_data.keys())
+    update_data["_pk_val"] = row_id
+    sql = f"UPDATE [{table_name}] SET {set_sql} WHERE [{pk}] = :_pk_val"
+    result = db.execute(text(sql), update_data)
+    db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(404, detail={"error": {"code": "ROW_NOT_FOUND", "message": f"未找到 {pk}={row_id} 的记录"}})
+
+    db_logger.info(f"管理员 {admin_id} 修改了 [{table_name}] 中 {pk}={row_id}: {update_data}")
+    return {"updated": True, "rowcount": result.rowcount}
+
+
+@router.delete("/db/table/{table_name}/{row_id}")
+def delete_table_row(
+    table_name: str,
+    row_id: str,
+    admin_id: str = Depends(get_current_admin),
+):
+    """删除一行数据"""
+    db = next(get_db())
+    from sqlalchemy import text
+    _validate_table(db, table_name)
+    pk = _get_primary_key(db, table_name)
+
+    sql = f"DELETE FROM [{table_name}] WHERE [{pk}] = :pk_val"
+    result = db.execute(text(sql), {"pk_val": row_id})
+    db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(404, detail={"error": {"code": "ROW_NOT_FOUND", "message": f"未找到 {pk}={row_id} 的记录"}})
+
+    db_logger.info(f"管理员 {admin_id} 删除了 [{table_name}] 中 {pk}={row_id}")
+    return {"deleted": True, "rowcount": result.rowcount}
 
 
 # ========== 初始化管理员（启动时自动创建默认管理员） ==========
