@@ -1,4 +1,5 @@
 import uuid
+import json
 from datetime import datetime
 
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, JSON, ForeignKey, create_engine, Text
@@ -126,6 +127,19 @@ class PaperStructuredInfo(Base):
 
     paper = relationship("Paper", back_populates="structured_info")
 
+    def _try_json(self, value, default=None):
+        """尝试 JSON 反序列化，失败则返回原值（兼容 Text 列存了字符串或已序列化的 JSON）"""
+        if value is None:
+            return default
+        if isinstance(value, (list, dict)):
+            return value
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return value
+        return value
+
     def to_dict(self):
         return {
             "research_background": self.research_background,
@@ -133,14 +147,14 @@ class PaperStructuredInfo(Base):
             "method_flow": self.method_flow,
             "model_algorithm": self.model_algorithm,
             "dataset_info": self.dataset_info,
-            "evaluation_metrics": self.evaluation_metrics or [],
+            "evaluation_metrics": self._try_json(self.evaluation_metrics, []),
             "experiment_results": self.experiment_results,
-            "innovations": self.innovations,
-            "limitations": self.limitations,
+            "innovations": self._try_json(self.innovations, []),
+            "limitations": self._try_json(self.limitations, []),
             "future_work": self.future_work,
-            "figures_tables": self.figures_tables or [],
-            "references": self.references or [],
-            "sections": self.sections or [],
+            "figures_tables": self._try_json(self.figures_tables, []),
+            "references": self._try_json(self.references, []),
+            "sections": self._try_json(self.sections, []),
         }
 
 

@@ -103,13 +103,14 @@ def delete_index(paper_id: str) -> Dict[str, Any]:
         return {"success": False, "error": "索引文件不存在"}
 
 
-def search_chunks(paper_id: str, query: str, k: int = 5) -> List[Dict[str, Any]]:
+def search_chunks(paper_id: str, query: str, k: int = 5, chunks_data: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
     检索相关分块
     
     :param paper_id: 论文 ID
     :param query: 查询文本
     :param k: 返回条数
+    :param chunks_data: 分块数据（可选，外部传入以解耦数据库依赖）
     :return: 检索结果列表
     """
     index_path = os.path.join(VECTOR_DIR, f"{paper_id}.index")
@@ -130,23 +131,35 @@ def search_chunks(paper_id: str, query: str, k: int = 5) -> List[Dict[str, Any]]
         k = min(k, SEARCH_CONFIG["top_k"])
         distances, indices = index.search(np.array(query_embedding), k)
         
-        # 从数据库查询分块内容
-        from ..app.models import get_db, Chunk
-        db = next(get_db())
-        
-        # 获取所有分块并按索引位置排序
-        chunks = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.id).all()
+        # 获取分块数据（优先使用外部传入的数据）
+        if chunks_data is not None:
+            chunks = chunks_data
+        else:
+            try:
+                from ..app.models import get_db, Chunk
+                db = next(get_db())
+                chunks = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.id).all()
+            except ImportError:
+                return []
         
         results = []
         for i, idx in enumerate(indices[0]):
             if idx >= 0 and idx < len(chunks):
                 chunk = chunks[idx]
-                results.append({
-                    "content": chunk.content,
-                    "section_title": chunk.section_title,
-                    "page": chunk.page_number,
-                    "score": float(1 - distances[0][i] / 2)  # 转换为相似度分数
-                })
+                if hasattr(chunk, 'content'):
+                    results.append({
+                        "content": chunk.content,
+                        "section_title": chunk.section_title,
+                        "page": chunk.page_number,
+                        "score": float(1 - distances[0][i] / 2)
+                    })
+                else:
+                    results.append({
+                        "content": chunk.get("content", ""),
+                        "section_title": chunk.get("section_title", ""),
+                        "page": chunk.get("page_number", 0),
+                        "score": float(1 - distances[0][i] / 2)
+                    })
         
         return results
     

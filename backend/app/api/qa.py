@@ -8,6 +8,7 @@ from typing import Optional
 
 from ..models import get_db, Paper, Conversation, Message, User
 from .auth import get_current_user
+from .user import _decrypt
 
 router = APIRouter(prefix="/api/qa", tags=["问答"])
 
@@ -34,7 +35,7 @@ def ask_question(paper_id: str, body: AskRequest, user_id: str = Depends(get_cur
 
     # 获取用户配置
     user = db.query(User).filter(User.id == user_id).first()
-    api_key = user.api_key_encrypted if user else None
+    api_key = _decrypt(user.api_key_encrypted) if (user and user.api_key_encrypted) else None
     if not api_key:
         raise HTTPException(400, detail={"error": {"code": "NO_API_KEY", "message": "请先在设置页配置 API Key"}})
 

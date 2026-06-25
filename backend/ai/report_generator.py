@@ -4,15 +4,45 @@ from .llm_client import LLMClient
 from .knowledge_base import search_chunks
 from .config import PROMPTS_DIR, SEARCH_CONFIG
 import os
+import re
 
 
-def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = None) -> Dict[str, Any]:
+QUERY_TERMS = {
+    "quick": {
+        "zh": ["摘要", "结论", "总结", "贡献", "概述", "概要"],
+        "en": ["abstract", "conclusion", "summary", "contribution", "overview", "introduction"]
+    },
+    "method": {
+        "zh": ["方法", "实验设置", "模型架构", "算法", "实现", "技术细节"],
+        "en": ["method", "methodology", "experiment", "experimental setup", "model architecture", "algorithm", "implementation", "approach"]
+    },
+    "experiment": {
+        "zh": ["实验结果", "实验数据", "评估指标", "对比实验", "性能", "消融实验"],
+        "en": ["experiment", "results", "evaluation", "metrics", "benchmark", "comparison", "ablation study", "performance"]
+    }
+}
+
+
+def detect_language(text: str) -> str:
+    if not text:
+        return "zh"
+    chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+    english_chars = len(re.findall(r'[a-zA-Z]', text))
+    total_chars = chinese_chars + english_chars
+    if total_chars == 0:
+        return "zh"
+    chinese_ratio = chinese_chars / total_chars
+    return "zh" if chinese_ratio > 0.3 else "en"
+
+
+def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = None, paper_text: str = "") -> Dict[str, Any]:
     """
     生成论文研读报告
     
     :param paper_id: 论文 ID
     :param report_type: 报告类型（quick/method/experiment）
     :param llm_client: LLM 客户端
+    :param paper_text: 论文文本（用于语言检测）
     :return: 报告结果
     """
     if not llm_client:
@@ -22,15 +52,16 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
         return {"success": False, "error": "无效的报告类型"}
     
     try:
-        # 根据报告类型构建检索查询词
+        lang = detect_language(paper_text)
+        
         if report_type == "quick":
-            queries = ["摘要", "结论", "总结", "贡献"]
+            queries = QUERY_TERMS["quick"]["zh"] + QUERY_TERMS["quick"]["en"] if lang == "zh" else QUERY_TERMS["quick"]["en"]
             report_title = "速读报告"
         elif report_type == "method":
-            queries = ["方法", "实验设置", "模型架构", "算法"]
+            queries = QUERY_TERMS["method"]["zh"] + QUERY_TERMS["method"]["en"] if lang == "zh" else QUERY_TERMS["method"]["en"]
             report_title = "方法总结报告"
-        else:  # experiment
-            queries = ["实验结果", "实验数据", "评估指标", "对比实验"]
+        else:
+            queries = QUERY_TERMS["experiment"]["zh"] + QUERY_TERMS["experiment"]["en"] if lang == "zh" else QUERY_TERMS["experiment"]["en"]
             report_title = "实验总结报告"
         
         # 检索相关内容

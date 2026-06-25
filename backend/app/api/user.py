@@ -1,6 +1,10 @@
 """
 用户接口：个人信息、API Key 配置
 """
+import base64
+import os
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -11,7 +15,36 @@ from .auth import get_current_user
 router = APIRouter(prefix="/api/user", tags=["用户"])
 
 
-# ========== 简单加密（生产环境应用 AES） ==========
+# ========== AES 加密/解密（AES-256-CBC） ==========
+
+def _get_encryption_key() -> bytes:
+    """获取 32 字节加密密钥（生产环境应从环境变量读取）"""
+    from ..config import API_KEY_ENCRYPTION_KEY
+    key = API_KEY_ENCRYPTION_KEY
+    if len(key) < 32:
+        key = key.ljust(32, '0')
+    return key[:32].encode('utf-8')
+
+
+def _encrypt(plain: str) -> str:
+    """AES-CBC 加密，返回 base64(IV + ciphertext)"""
+    key = _get_encryption_key()
+    iv = os.urandom(16)
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    ct = cipher.encrypt(pad(plain.encode('utf-8'), AES.block_size))
+    return base64.b64encode(iv + ct).decode('utf-8')
+
+
+def _decrypt(encrypted: str) -> str:
+    """AES-CBC 解密"""
+    key = _get_encryption_key()
+    raw = base64.b64decode(encrypted)
+    iv, ct = raw[:16], raw[16:]
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    return unpad(cipher.decrypt(ct), AES.block_size).decode('utf-8')
+
+
+# ========== 脱敏显示 ==========
 
 def _mask_key(key: str) -> str:
     if not key or len(key) <= 8:
@@ -63,10 +96,10 @@ def get_user_config(user_id: str = Depends(get_current_user)):
     if not user:
         raise HTTPException(404, detail={"error": {"code": "USER_NOT_FOUND", "message": "用户不存在"}})
 
-    key = user.api_key_encrypted or ""
+    plain_key = _decrypt(user.api_key_encrypted) if user.api_key_encrypted else ""
     return {
-        "api_key": _mask_key(key) if key else "",
-        "api_key_configured": bool(key),
+        "api_key": _mask_key(plain_key) if plain_key else "",
+        "api_key_configured": bool(plain_key),
         "model": user.model_preference or "deepseek-chat",
     }
 
@@ -80,16 +113,16 @@ def update_user_config(body: UpdateConfigRequest, user_id: str = Depends(get_cur
         raise HTTPException(404, detail={"error": {"code": "USER_NOT_FOUND", "message": "用户不存在"}})
 
     if body.api_key is not None:
-        user.api_key_encrypted = body.api_key  # 简单存储，生产环境用 AES
+        user.api_key_encrypted = _encrypt(body.api_key)
     if body.model is not None:
         user.model_preference = body.model
 
     db.commit()
 
-    key = user.api_key_encrypted or ""
+    plain_key = _decrypt(user.api_key_encrypted) if user.api_key_encrypted else ""
     return {
-        "api_key": _mask_key(key) if key else "",
-        "api_key_configured": bool(key),
+        "api_key": _mask_key(plain_key) if plain_key else "",
+        "api_key_configured": bool(plain_key),
         "model": user.model_preference or "deepseek-chat",
     }
 
