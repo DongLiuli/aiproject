@@ -252,7 +252,7 @@ def _sort_blocks(blocks: List[Tuple]) -> List[Tuple]:
     block_info = []
     for block in blocks:
         x0, y0, x1, y1, content, block_type, block_no = block
-        if block_type == 0:  # 文本块
+        if content.strip():  # 只要有文本内容就处理
             block_info.append({
                 "block": block,
                 "y0": y0,
@@ -304,7 +304,7 @@ def _extract_text_from_blocks(blocks: List[Tuple]) -> str:
     
     for block in blocks:
         x0, y0, x1, y1, content, block_type, block_no = block
-        if block_type == 0:  # 文本块
+        if content.strip():  # 只要有文本内容就提取
             text_parts.append(content)
     
     return "\n\n".join(text_parts)
