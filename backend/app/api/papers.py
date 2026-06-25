@@ -259,8 +259,11 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
             db.commit()
             return
 
+        model_preference = user.model_preference if user else "deepseek-chat"
+        provider = "qwen" if model_preference == "qwen-turbo" else "deepseek"
+
         from ai.llm_client import LLMClient
-        llm_client = LLMClient(api_key=api_key)
+        llm_client = LLMClient(api_key=api_key, provider=provider)
 
         # ③ 结构化信息抽取
         from ai.info_extractor import extract_structured_info
