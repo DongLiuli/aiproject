@@ -63,11 +63,8 @@ export const userAPI = {
     return api.put('/api/user/config', data)
   },
   
-  testConfig(config) {
-    return api.post('/api/user/config/test', {
-      api_key: config.llm_api_key,
-      model: config.llm_model
-    })
+  testConfig() {
+    return api.post('/api/user/config/test')
   },
 }
 

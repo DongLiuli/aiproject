@@ -1,37 +1,51 @@
-<script setup>import { ref, watch } from 'vue';
-import { useUserStore } from '@/stores/user';
-import { X, Save, CheckCircle, AlertCircle } from 'lucide-vue-next';
-const emit = defineEmits(['close']);
-const userStore = useUserStore();
-const config = ref({ ...userStore.config });
-const testResult = ref(null);
-const saving = ref(false);
-watch(() => userStore.config, (newConfig) => {
- config.value = { ...newConfig };
-}, { deep: true });
+<script setup>
+import { ref, watch } from 'vue'
+import { useUserStore } from '@/stores/user'
+import { X, Save, CheckCircle, AlertCircle } from 'lucide-vue-next'
+const emit = defineEmits(['close'])
+const userStore = useUserStore()
+const config = ref({ ...userStore.config })
+const testResult = ref(null)
+const saving = ref(false)
+const modelUrls = {
+  'deepseek-chat': 'https://api.deepseek.com',
+  'qwen-turbo': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+}
+watch(
+  () => config.value.llm_model,
+  (newModel) => {
+    if (modelUrls[newModel]) {
+      config.value.llm_base_url = modelUrls[newModel]
+    }
+  },
+)
+watch(
+  () => userStore.config,
+  (newConfig) => {
+    config.value = { ...newConfig }
+  },
+  { deep: true },
+)
 async function saveConfig() {
- saving.value = true;
- try {
- await userStore.updateConfig(config.value);
- testResult.value = { success: true, message: '配置保存成功' };
- }
- catch (err) {
- testResult.value = { success: false, message: '保存失败，请重试' };
- }
- finally {
- saving.value = false;
- }
+  saving.value = true
+  try {
+    await userStore.updateConfig(config.value)
+    testResult.value = { success: true, message: '配置保存成功' }
+  } catch (err) {
+    testResult.value = { success: false, message: '保存失败，请重试' }
+  } finally {
+    saving.value = false
+  }
 }
 async function testConfig() {
- try {
- const success = await userStore.testConfig();
- testResult.value = success
- ? { success: true, message: '配置测试成功' }
- : { success: false, message: '配置测试失败，请检查API密钥' };
- }
- catch (err) {
- testResult.value = { success: false, message: '测试失败，请检查网络连接' };
- }
+  try {
+    const success = await userStore.testConfig()
+    testResult.value = success
+      ? { success: true, message: '配置测试成功' }
+      : { success: false, message: '配置测试失败，请检查API密钥' }
+  } catch (err) {
+    testResult.value = { success: false, message: '测试失败，请检查网络连接' }
+  }
 }
 </script>
 
@@ -44,45 +58,43 @@ async function testConfig() {
           <X class="close-icon" />
         </button>
       </div>
-      
+
       <div class="settings-form">
         <div class="form-section">
           <h3>LLM 配置</h3>
-          
+
           <div class="form-group">
             <label class="form-label">模型选择</label>
             <select v-model="config.llm_model" class="form-select">
               <option value="deepseek-chat">DeepSeek Chat</option>
               <option value="qwen-turbo">Qwen Turbo</option>
-              <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
             </select>
           </div>
-          
+
           <div class="form-group">
             <label class="form-label">API 基础 URL</label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               v-model="config.llm_base_url"
               class="form-input"
-              placeholder="https://api.deepseek.com"
+              placeholder="https://api.deepseek.com 或 https://dashscope.aliyuncs.com"
             />
           </div>
-          
+
           <div class="form-group">
             <label class="form-label">API Key</label>
-            <input 
-              type="password" 
+            <input
+              type="password"
               v-model="config.llm_api_key"
               class="form-input"
               placeholder="请输入您的 API Key"
             />
-            <p class="form-hint">
-              您的 API Key 不会被存储在服务端，仅用于本次会话
-            </p>
+            <p class="form-hint">您的 API Key 不会被存储在服务端，仅用于本次会话</p>
           </div>
         </div>
-        
-        <div v-if="testResult" 
+
+        <div
+          v-if="testResult"
           class="test-result"
           :class="{ 'test-success': testResult.success, 'test-error': !testResult.success }"
         >
@@ -91,19 +103,11 @@ async function testConfig() {
           <span>{{ testResult.message }}</span>
         </div>
       </div>
-      
+
       <div class="modal-actions">
-        <button class="test-btn" @click="testConfig">
-          测试配置
-        </button>
-        <button class="cancel-btn" @click="$emit('close')">
-          取消
-        </button>
-        <button 
-          class="save-btn"
-          :disabled="saving"
-          @click="saveConfig"
-        >
+        <button class="test-btn" @click="testConfig">测试配置</button>
+        <button class="cancel-btn" @click="$emit('close')">取消</button>
+        <button class="save-btn" :disabled="saving" @click="saveConfig">
           <Save class="save-icon" />
           <span v-if="saving">保存中...</span>
           <span v-else>保存</span>

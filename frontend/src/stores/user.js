@@ -32,8 +32,8 @@ export const useUserStore = defineStore('user', () => {
  }
  async function testConfig() {
  try {
- const response = await userAPI.testConfig(config.value);
- return response.ok;
+ const response = await userAPI.testConfig();
+ return response.success;
  }
  catch (error) {
  return false;
