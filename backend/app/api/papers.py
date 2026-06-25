@@ -208,16 +208,16 @@ def reparse_paper(paper_id: str, background_tasks: BackgroundTasks, user_id: str
 
     # 如果长时间卡在 parsing（异常吞没），允许重新触发
     if paper.parse_status == "parsing":
-        paper.parse_status = "pending"
+        paper.parse_status = "parsing"
         paper.parse_error = "上次解析异常中断，已重置"
 
-    paper.parse_status = "pending"
+    paper.parse_status = "parsing"
     paper.parse_error = None
     db.commit()
 
     background_tasks.add_task(_run_parse_pipeline, paper_id, user_id)
 
-    return {"paper_id": paper_id, "parse_status": "pending"}
+    return {"paper_id": paper_id, "parse_status": "parsing"}
 
 
 # ========== 异步解析管道 ==========

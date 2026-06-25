@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
@@ -51,14 +52,16 @@ def verify_token(token: str) -> Optional[str]:
         return None
 
 
+security = HTTPBearer(auto_error=False)
+
+
 def get_current_user(
-    authorization: Optional[str] = Header(None),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     x_session_id: Optional[str] = Header(None),
 ):
     """从请求头解析当前用户身份。所有接口共用此依赖。"""
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization[7:]
-        user_id = verify_token(token)
+    if credentials:
+        user_id = verify_token(credentials.credentials)
         if user_id:
             return user_id
 
