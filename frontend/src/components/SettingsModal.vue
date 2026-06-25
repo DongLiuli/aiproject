@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { X, Save, CheckCircle, AlertCircle } from 'lucide-vue-next'
-const emit = defineEmits(['close'])
+defineEmits(['close'])
 const userStore = useUserStore()
 const config = ref({ ...userStore.config })
 const testResult = ref(null)
@@ -31,7 +31,7 @@ async function saveConfig() {
   try {
     await userStore.updateConfig(config.value)
     testResult.value = { success: true, message: '配置保存成功' }
-  } catch (err) {
+  } catch (_err) {
     testResult.value = { success: false, message: '保存失败，请重试' }
   } finally {
     saving.value = false
@@ -43,7 +43,7 @@ async function testConfig() {
     testResult.value = success
       ? { success: true, message: '配置测试成功' }
       : { success: false, message: '配置测试失败，请检查API密钥' }
-  } catch (err) {
+  } catch (_err) {
     testResult.value = { success: false, message: '测试失败，请检查网络连接' }
   }
 }

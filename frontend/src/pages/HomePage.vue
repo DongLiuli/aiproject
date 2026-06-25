@@ -1,48 +1,49 @@
-<script setup>import { ref, onMounted } from 'vue';
-import { usePapersStore } from '@/stores/papers';
-import { useAuthStore } from '@/stores/auth';
-import { FileText, Search, Filter, Upload, BookOpen } from 'lucide-vue-next';
-import PaperCard from '@/components/PaperCard.vue';
-const papersStore = usePapersStore();
-const authStore = useAuthStore();
-const searchQuery = ref('');
-const showFilters = ref(false);
-const filteredPapers = ref([]);
+<script setup>
+import { ref, onMounted } from 'vue'
+import { usePapersStore } from '@/stores/papers'
+import { useAuthStore } from '@/stores/auth'
+import { useUIStore } from '@/stores/ui'
+import { FileText, Search, Filter, Upload, BookOpen } from 'lucide-vue-next'
+import PaperCard from '@/components/PaperCard.vue'
+const papersStore = usePapersStore()
+const authStore = useAuthStore()
+const uiStore = useUIStore()
+const searchQuery = ref('')
+const showFilters = ref(false)
+const filteredPapers = ref([])
 onMounted(async () => {
- await papersStore.fetchPapers();
-});
+  await authStore.initialize()
+  await papersStore.fetchPapers()
+})
 function filterPapers() {
- if (!searchQuery.value) {
- filteredPapers.value = papersStore.papers;
- return;
- }
- const query = searchQuery.value.toLowerCase();
- filteredPapers.value = papersStore.papers.filter(paper => {
- const title = paper.title?.toLowerCase() || paper.filename?.toLowerCase() || '';
- const authors = paper.authors?.toLowerCase() || '';
- return title.includes(query) || authors.includes(query);
- });
+  if (!searchQuery.value) {
+    filteredPapers.value = papersStore.papers
+    return
+  }
+  const query = searchQuery.value.toLowerCase()
+  filteredPapers.value = papersStore.papers.filter((paper) => {
+    const title = paper.title?.toLowerCase() || paper.file_name?.toLowerCase() || ''
+    const authors = paper.authors?.toLowerCase() || ''
+    return title.includes(query) || authors.includes(query)
+  })
 }
 async function handleViewPaper(paper) {
- window.location.href = `/papers/${paper.id}`;
+  window.location.href = `/papers/${paper.paper_id}`
 }
 async function handleDeletePaper(paperId) {
- if (!confirm('确定要删除这篇论文吗？'))
- return;
- try {
- await papersStore.deletePaper(paperId);
- }
- catch (err) {
- alert('删除失败，请重试');
- }
+  if (!confirm('确定要删除这篇论文吗？')) return
+  try {
+    await papersStore.deletePaper(paperId)
+  } catch (_err) {
+    alert('删除失败，请重试')
+  }
 }
 async function handleReparse(paperId) {
- try {
- await papersStore.reparsePaper(paperId);
- }
- catch (err) {
- alert('重新解析失败，请重试');
- }
+  try {
+    await papersStore.reparsePaper(paperId)
+  } catch (_err) {
+    alert('重新解析失败，请重试')
+  }
 }
 </script>
 
@@ -56,58 +57,58 @@ async function handleReparse(paperId) {
           <p>管理和解析您的学术论文</p>
         </div>
       </div>
-      
+
       <div v-if="authStore.isAnonymous" class="anonymous-hint">
         <span>当前为匿名模式，登录后可同步数据</span>
       </div>
     </div>
-    
+
     <div class="page-actions">
       <div class="search-bar">
         <Search class="search-icon" />
-        <input 
-          type="text" 
+        <input
+          type="text"
           v-model="searchQuery"
           class="search-input"
           placeholder="搜索论文标题或作者..."
           @input="filterPapers"
         />
       </div>
-      
+
       <button class="filter-btn" @click="showFilters = !showFilters">
         <Filter class="filter-icon" />
         <span>筛选</span>
       </button>
     </div>
-    
+
     <div v-if="papersStore.loading" class="loading-state">
       <div class="loading-spinner"></div>
       <p>加载中...</p>
     </div>
-    
+
     <div v-else-if="papersStore.papers.length === 0" class="empty-state">
       <div class="empty-icon">
         <FileText class="icon" />
       </div>
       <h2>暂无论文</h2>
       <p>上传您的第一篇论文开始解析</p>
-      <button class="upload-btn" @click="$emit('upload')">
+      <button class="upload-btn" @click="uiStore.openUploadModal()">
         <Upload class="upload-icon" />
         <span>上传论文</span>
       </button>
     </div>
-    
+
     <div v-else class="papers-grid">
-      <PaperCard 
+      <PaperCard
         v-for="paper in filteredPapers.length > 0 ? filteredPapers : papersStore.papers"
-        :key="paper.id"
+        :key="paper.paper_id"
         :paper="paper"
         @view="handleViewPaper"
         @delete="handleDeletePaper"
         @reparse="handleReparse"
       />
     </div>
-    
+
     <div v-if="filteredPapers.length > 0 && searchQuery" class="search-results">
       找到 {{ filteredPapers.length }} 篇匹配的论文
     </div>
@@ -237,8 +238,12 @@ async function handleReparse(paperId) {
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .loading-state p {
@@ -294,7 +299,9 @@ async function handleReparse(paperId) {
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s;
 }
 
 .upload-btn:hover {
@@ -325,7 +332,7 @@ async function handleReparse(paperId) {
     flex-direction: column;
     gap: 16px;
   }
-  
+
   .papers-grid {
     grid-template-columns: 1fr;
   }
