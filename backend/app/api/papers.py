@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from ..config import UPLOAD_DIR, MAX_UPLOAD_SIZE
 from ..models import get_db, User, Paper, PaperStructuredInfo, Conversation, Message, Chunk, Report
 from .auth import get_current_user
+from .user import _decrypt
 
 router = APIRouter(prefix="/api/papers", tags=["论文管理"])
 
@@ -251,7 +252,7 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
 
         # ② 获取用户 LLM 配置
         user = db.query(User).filter(User.id == user_id).first()
-        api_key = user.api_key_encrypted if user else None
+        api_key = _decrypt(user.api_key_encrypted) if (user and user.api_key_encrypted) else None
         if not api_key:
             paper.parse_status = "failed"
             paper.parse_error = "未配置 API Key，请在设置页配置"
