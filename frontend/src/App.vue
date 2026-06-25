@@ -1,13 +1,13 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import Layout from '@/components/Layout.vue'
 import UploadModal from '@/components/UploadModal.vue'
 import SettingsModal from '@/components/SettingsModal.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useUIStore } from '@/stores/ui'
 
-const showUploadModal = ref(false)
-const showSettingsModal = ref(false)
 const authStore = useAuthStore()
+const uiStore = useUIStore()
 
 onMounted(async () => {
   await authStore.initialize()
@@ -15,22 +15,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Layout 
-    @upload="showUploadModal = true"
-    @settings="showSettingsModal = true"
-  >
+  <Layout>
     <router-view />
   </Layout>
-  
-  <UploadModal 
-    v-if="showUploadModal" 
-    @close="showUploadModal = false"
-  />
-  
-  <SettingsModal 
-    v-if="showSettingsModal"
-    @close="showSettingsModal = false"
-  />
+
+  <UploadModal v-if="uiStore.showUploadModal" @close="uiStore.closeUploadModal" />
+
+  <SettingsModal v-if="uiStore.showSettingsModal" @close="uiStore.closeSettingsModal" />
 </template>
 
 <style>
@@ -41,7 +32,9 @@ onMounted(async () => {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',
+    'Helvetica Neue', sans-serif;
   background: #f5f7fa;
   color: #1a1a1a;
   line-height: 1.6;

@@ -12,7 +12,11 @@ export const useUserStore = defineStore('user', () => {
  loading.value = true;
  try {
  const response = await userAPI.getConfig();
- config.value = { ...config.value, ...response };
+ config.value = {
+ ...config.value,
+ llm_api_key: response.api_key || '',
+ llm_model: response.model || 'deepseek-chat',
+ };
  }
  catch (error) {
  console.error('Failed to fetch config:', error);
@@ -24,7 +28,10 @@ export const useUserStore = defineStore('user', () => {
  async function updateConfig(newConfig) {
  try {
  config.value = { ...config.value, ...newConfig };
- await userAPI.updateConfig(config.value);
+ await userAPI.updateConfig({
+ api_key: config.value.llm_api_key,
+ model: config.value.llm_model,
+ });
  }
  catch (error) {
  throw error;
@@ -33,7 +40,7 @@ export const useUserStore = defineStore('user', () => {
  async function testConfig() {
  try {
  const response = await userAPI.testConfig();
- return response.success;
+ return response.ok;
  }
  catch (error) {
  return false;

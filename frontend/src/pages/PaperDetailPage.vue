@@ -1,53 +1,57 @@
-<script setup>import { ref, onMounted, computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { usePapersStore } from '@/stores/papers';
-import { ArrowLeft, FileText, Clock, Users, Calendar, BookOpen, MessageSquare, FileOutput } from 'lucide-vue-next';
-import PaperContent from '@/components/PaperContent.vue';
-import QAInterface from '@/components/QAInterface.vue';
-import ReportPanel from '@/components/ReportPanel.vue';
-const route = useRoute();
-const router = useRouter();
-const papersStore = usePapersStore();
-const activeTab = ref('content');
-const paperId = computed(() => route.params.id);
-const paper = computed(() => papersStore.currentPaper);
+<script setup>
+import { ref, onMounted, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { usePapersStore } from '@/stores/papers'
+import {
+  ArrowLeft,
+  FileText,
+  Clock,
+  Users,
+  Calendar,
+  BookOpen,
+  MessageSquare,
+  FileOutput,
+} from 'lucide-vue-next'
+import PaperContent from '@/components/PaperContent.vue'
+import QAInterface from '@/components/QAInterface.vue'
+import ReportPanel from '@/components/ReportPanel.vue'
+const route = useRoute()
+const router = useRouter()
+const papersStore = usePapersStore()
+const activeTab = ref('content')
+const paperId = computed(() => route.params.id)
+const paper = computed(() => papersStore.currentPaper)
 onMounted(async () => {
- if (!paperId.value)
- return;
- try {
- await papersStore.getPaper(paperId.value);
- }
- catch (err) {
- console.error('Failed to load paper:', err);
- }
-});
+  if (!paperId.value) return
+  try {
+    await papersStore.getPaper(paperId.value)
+  } catch (err) {
+    console.error('Failed to load paper:', err)
+  }
+})
 function goBack() {
- router.push('/');
+  router.push('/')
 }
 const tabs = [
- { id: 'content', name: '论文内容', icon: BookOpen },
- { id: 'qa', name: '智能问答', icon: MessageSquare },
- { id: 'report', name: '研读报告', icon: FileOutput },
-];
+  { id: 'content', name: '论文内容', icon: BookOpen },
+  { id: 'qa', name: '智能问答', icon: MessageSquare },
+  { id: 'report', name: '研读报告', icon: FileOutput },
+]
 const formatDate = (dateStr) => {
- if (!dateStr)
- return '-';
- const date = new Date(dateStr);
- return date.toLocaleDateString('zh-CN', {
- year: 'numeric',
- month: 'long',
- day: 'numeric'
- });
-};
+  if (!dateStr) return '-'
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
 const formatSize = (bytes) => {
- if (!bytes)
- return '-';
- if (bytes < 1024)
- return bytes + ' B';
- if (bytes < 1024 * 1024)
- return (bytes / 1024).toFixed(1) + ' KB';
- return (bytes / 1024 / 1024).toFixed(2) + ' MB';
-};
+  if (!bytes) return '-'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / 1024 / 1024).toFixed(2) + ' MB'
+}
 </script>
 
 <template>
@@ -56,7 +60,7 @@ const formatSize = (bytes) => {
       <div class="loading-spinner"></div>
       <p>加载中...</p>
     </div>
-    
+
     <div v-else class="paper-detail">
       <div class="detail-header">
         <button class="back-btn" @click="goBack">
@@ -64,13 +68,13 @@ const formatSize = (bytes) => {
           <span>返回</span>
         </button>
       </div>
-      
+
       <div class="paper-header">
         <div class="paper-icon">
           <FileText class="icon" />
         </div>
         <div class="paper-meta">
-          <h1 class="paper-title">{{ paper.title || paper.filename }}</h1>
+          <h1 class="paper-title">{{ paper.title || paper.file_name }}</h1>
           <div class="meta-info">
             <span v-if="paper.authors" class="meta-item">
               <Users class="meta-icon" />
@@ -78,7 +82,7 @@ const formatSize = (bytes) => {
             </span>
             <span class="meta-item">
               <Calendar class="meta-icon" />
-              {{ formatDate(paper.created_at) }}
+              {{ formatDate(paper.upload_time) }}
             </span>
             <span class="meta-item">
               <Clock class="meta-icon" />
@@ -86,16 +90,22 @@ const formatSize = (bytes) => {
             </span>
           </div>
         </div>
-        <span class="status-badge" :class="`status-${paper.status}`">
-          {{ paper.status === 'uploaded' ? '已上传' : 
-             paper.status === 'parsing' ? '解析中' : 
-             paper.status === 'completed' ? '已完成' : '失败' }}
+        <span class="status-badge" :class="`status-${paper.parse_status}`">
+          {{
+            paper.parse_status === 'uploaded'
+              ? '已上传'
+              : paper.parse_status === 'parsing'
+                ? '解析中'
+                : paper.parse_status === 'completed'
+                  ? '已完成'
+                  : '失败'
+          }}
         </span>
       </div>
-      
+
       <div class="detail-tabs">
-        <button 
-          v-for="tab in tabs" 
+        <button
+          v-for="tab in tabs"
           :key="tab.id"
           class="tab-btn"
           :class="{ 'tab-active': activeTab === tab.id }"
@@ -105,12 +115,12 @@ const formatSize = (bytes) => {
           <span>{{ tab.name }}</span>
         </button>
       </div>
-      
+
       <div class="detail-content">
-        <PaperContent v-if="activeTab === 'content'" :content="paper.content || {}" />
-        
+        <PaperContent v-if="activeTab === 'content'" :content="paper.structured_info || {}" />
+
         <QAInterface v-else-if="activeTab === 'qa'" :paper-id="paperId" />
-        
+
         <ReportPanel v-else-if="activeTab === 'report'" :paper-id="paperId" />
       </div>
     </div>
@@ -142,8 +152,12 @@ const formatSize = (bytes) => {
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .paper-detail {
@@ -307,11 +321,11 @@ const formatSize = (bytes) => {
   .paper-header {
     flex-direction: column;
   }
-  
+
   .paper-title {
     font-size: 1.25rem;
   }
-  
+
   .meta-info {
     flex-direction: column;
     gap: 12px;

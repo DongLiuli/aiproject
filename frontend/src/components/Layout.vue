@@ -2,19 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePapersStore } from '@/stores/papers'
-import { 
-  BookOpen, 
-  Upload, 
-  Settings, 
-  User, 
-  LogOut, 
-  LogIn,
-  Menu,
-  X
-} from 'lucide-vue-next'
+import { useUIStore } from '@/stores/ui'
+import { BookOpen, Upload, Settings, User, LogOut, LogIn, Menu, X } from 'lucide-vue-next'
 
 const authStore = useAuthStore()
 const papersStore = usePapersStore()
+const uiStore = useUIStore()
 
 const showMenu = ref(false)
 const showAuthModal = ref(false)
@@ -44,24 +37,24 @@ function openAuth(mode) {
           <BookOpen class="logo-icon" />
           <span class="logo-text">科研文献解析</span>
         </div>
-        
+
         <nav class="nav" :class="{ 'nav-visible': showMenu }">
           <router-link to="/" class="nav-link">
             <BookOpen class="nav-icon" />
             <span>文献库</span>
           </router-link>
         </nav>
-        
+
         <div class="header-actions">
-          <button class="action-btn" @click="$emit('upload')">
+          <button class="action-btn" @click="uiStore.openUploadModal()">
             <Upload class="action-icon" />
             <span>上传论文</span>
           </button>
-          
-          <button class="action-btn" @click="$emit('settings')">
+
+          <button class="action-btn" @click="uiStore.openSettingsModal()">
             <Settings class="action-icon" />
           </button>
-          
+
           <div v-if="authStore.user" class="user-menu">
             <button class="user-btn">
               <User class="user-icon" />
@@ -72,7 +65,7 @@ function openAuth(mode) {
               <span>退出</span>
             </button>
           </div>
-          
+
           <div v-else class="auth-actions">
             <button class="auth-btn" @click="openAuth('login')">
               <LogIn class="auth-icon" />
@@ -83,7 +76,7 @@ function openAuth(mode) {
               <span>注册</span>
             </button>
           </div>
-          
+
           <button class="mobile-menu-btn" @click="showMenu = !showMenu">
             <Menu v-if="!showMenu" class="menu-icon" />
             <X v-else class="menu-icon" />
@@ -91,13 +84,13 @@ function openAuth(mode) {
         </div>
       </div>
     </header>
-    
+
     <main class="main-content">
       <slot></slot>
     </main>
-    
-    <AuthModal 
-      v-if="showAuthModal" 
+
+    <AuthModal
+      v-if="showAuthModal"
       :mode="authMode"
       @close="showAuthModal = false"
       @success="showAuthModal = false"
@@ -306,15 +299,15 @@ function openAuth(mode) {
     gap: 8px;
     display: none;
   }
-  
+
   .nav-visible {
     display: flex;
   }
-  
+
   .mobile-menu-btn {
     display: block;
   }
-  
+
   .header-actions button span {
     display: none;
   }
