@@ -1,5 +1,6 @@
 """知识库构建模块"""
 import os
+import logging
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -85,6 +86,7 @@ def build_knowledge_base(paper_id: str, sections: List[Dict[str, Any]]) -> Dict[
                 "section_title": chunk["section_title"],
                 "page_number": chunk["page_number"],
                 "paragraph_index": chunk["paragraph_index"],
+                "faiss_index": i,
                 "content": chunk["content"],
                 "embedding": embeddings[i].tolist()
             })
@@ -116,8 +118,6 @@ def delete_index(paper_id: str) -> Dict[str, Any]:
     else:
         return {"success": False, "error": "索引文件不存在"}
 
-
-import logging
 
 def search_chunks(paper_id: str, query: str, k: int = 5, chunks_data: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
@@ -152,8 +152,15 @@ def search_chunks(paper_id: str, query: str, k: int = 5, chunks_data: List[Dict[
         k = min(k, SEARCH_CONFIG["top_k"])
         distances, indices = index.search(np.array(query_embedding), k)
         
-        # 使用外部传入的分块数据
+        # 使用外部传入的分块数据，按 faiss_index 排序确保与 FAISS 索引顺序一致
         chunks = chunks_data
+        if chunks:
+            if hasattr(chunks[0], 'faiss_index'):
+                chunks = sorted(chunks, key=lambda x: x.faiss_index)
+            elif isinstance(chunks[0], dict) and 'faiss_index' in chunks[0]:
+                chunks = sorted(chunks, key=lambda x: x['faiss_index'])
+            else:
+                logging.warning(f"search_chunks: chunks_data 缺少 faiss_index 字段，可能导致索引映射错误 - {paper_id}")
         
         results = []
         for i, idx in enumerate(indices[0]):

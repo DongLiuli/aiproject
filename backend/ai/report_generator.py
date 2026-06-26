@@ -1,5 +1,5 @@
 """报告生成模块"""
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 from .llm_client import LLMClient
 from .knowledge_base import search_chunks
 from .config import PROMPTS_DIR, SEARCH_CONFIG
@@ -35,7 +35,8 @@ def detect_language(text: str) -> str:
     return "zh" if chinese_ratio > 0.3 else "en"
 
 
-def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = None, paper_text: str = "") -> Dict[str, Any]:
+def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = None, paper_text: str = "", 
+                    chunks_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     生成论文研读报告
     
@@ -43,6 +44,7 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
     :param report_type: 报告类型（quick/method/experiment）
     :param llm_client: LLM 客户端
     :param paper_text: 论文文本（用于语言检测）
+    :param chunks_data: 分块数据（可选，外部传入以解耦数据库依赖）
     :return: 报告结果
     """
     if not llm_client:
@@ -52,14 +54,14 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
         return {"success": False, "error": "无效的报告类型"}
     
     try:
-        # 从数据库查询分块数据
-        chunks_data = []
-        try:
-            from app.models import get_db, Chunk
-            db = next(get_db())
-            chunks_data = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.page_number, Chunk.paragraph_index).all()
-        except ImportError:
-            return {"success": False, "error": "无法连接数据库"}
+        # 如果未传入分块数据，从数据库查询
+        if chunks_data is None:
+            try:
+                from app.models import get_db, Chunk
+                db = next(get_db())
+                chunks_data = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+            except ImportError:
+                return {"success": False, "error": "无法连接数据库"}
         
         if not chunks_data:
             return {"success": False, "error": "论文尚未解析或无分块数据"}
