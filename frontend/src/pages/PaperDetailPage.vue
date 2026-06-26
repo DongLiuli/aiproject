@@ -117,11 +117,11 @@ const formatSize = (bytes) => {
       </div>
 
       <div class="detail-content">
-        <PaperContent v-if="activeTab === 'content'" :content="paper.structured_info || {}" />
+        <PaperContent v-if="activeTab === 'content'" :paper="paper" />
 
         <QAInterface v-else-if="activeTab === 'qa'" :paper-id="paperId" />
 
-        <ReportPanel v-else-if="activeTab === 'report'" :paper-id="paperId" />
+        <ReportPanel v-else-if="activeTab === 'report'" :paper-id="paperId" :paper="paper" />
       </div>
     </div>
   </div>

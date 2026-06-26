@@ -1,47 +1,98 @@
-<script setup>import { ref } from 'vue';
-import { useReportsStore } from '@/stores/papers';
-import { FileText, BookOpen, BarChart3, Loader2, Download, RefreshCw } from 'lucide-vue-next';
+<script setup>
+import { ref, computed } from 'vue'
+import { useReportsStore } from '@/stores/papers'
+import {
+  FileText,
+  BookOpen,
+  BarChart3,
+  Loader2,
+  Download,
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+} from 'lucide-vue-next'
 const props = defineProps({
- paperId: {
- type: String,
- required: true
- }
-});
-const reportsStore = useReportsStore();
-const activeTab = ref('summary');
-const generating = ref(false);
-const reportContent = ref('');
+  paperId: {
+    type: String,
+    required: true,
+  },
+  paper: {
+    type: Object,
+    default: () => ({}),
+  },
+})
+const reportsStore = useReportsStore()
+const activeTab = ref('structured')
+const generating = ref(false)
+const reportContent = ref('')
+const expandedSections = ref(new Set())
 const reportTypes = [
- { id: 'summary', name: '速读报告', icon: BookOpen },
- { id: 'methods', name: '方法总结', icon: FileText },
- { id: 'experiments', name: '实验总结', icon: BarChart3 },
-];
+  { id: 'structured', name: '结构化分析', icon: BookOpen },
+  { id: 'summary', name: '速读报告', icon: FileText },
+  { id: 'methods', name: '方法总结', icon: BookOpen },
+  { id: 'experiments', name: '实验总结', icon: BarChart3 },
+]
+const structuredSections = computed(() => {
+  const items = []
+  const info = props.paper.structured_info || {}
+  if (info.research_background) {
+    items.push({ id: 'research_background', title: '研究背景', content: info.research_background })
+  }
+  if (info.research_questions) {
+    items.push({ id: 'research_questions', title: '研究问题', content: info.research_questions })
+  }
+  if (info.method_flow) {
+    items.push({ id: 'method_flow', title: '方法流程', content: info.method_flow })
+  }
+  if (info.experiment_design) {
+    items.push({ id: 'experiment', title: '实验设计', content: info.experiment_design })
+  }
+  if (info.experiment_results) {
+    items.push({ id: 'results', title: '实验结果', content: info.experiment_results })
+  }
+  if (info.innovations) {
+    items.push({ id: 'innovations', title: '创新点', content: info.innovations })
+  }
+  return items
+})
+function toggleSection(id) {
+  if (expandedSections.value.has(id)) {
+    expandedSections.value.delete(id)
+  } else {
+    expandedSections.value.add(id)
+  }
+  expandedSections.value = new Set(expandedSections.value)
+}
+async function copyContent(content) {
+  try {
+    await navigator.clipboard.writeText(content)
+  } catch (err) {
+    console.error('Copy failed:', err)
+  }
+}
 async function generateReport(type) {
- if (generating.value)
- return;
- generating.value = true;
- activeTab.value = type;
- try {
- const content = await reportsStore.generateReport(props.paperId, type);
- reportContent.value = content;
- }
- catch (err) {
- reportContent.value = '报告生成失败，请重试';
- }
- finally {
- generating.value = false;
- }
+  if (generating.value) return
+  generating.value = true
+  activeTab.value = type
+  try {
+    const content = await reportsStore.generateReport(props.paperId, type)
+    reportContent.value = content
+  } catch (err) {
+    reportContent.value = '报告生成失败，请重试'
+  } finally {
+    generating.value = false
+  }
 }
 function downloadReport() {
- if (!reportContent.value)
- return;
- const blob = new Blob([reportContent.value], { type: 'text/markdown' });
- const url = URL.createObjectURL(blob);
- const a = document.createElement('a');
- a.href = url;
- a.download = `report-${props.paperId}-${activeTab.value}.md`;
- a.click();
- URL.revokeObjectURL(url);
+  if (!reportContent.value) return
+  const blob = new Blob([reportContent.value], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `report-${props.paperId}-${activeTab.value}.md`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 </script>
 
@@ -50,7 +101,7 @@ function downloadReport() {
     <div class="report-header">
       <FileText class="report-icon" />
       <h3>研读报告</h3>
-      <button 
+      <button
         class="download-btn"
         :disabled="!reportContent"
         @click="downloadReport"
@@ -59,32 +110,54 @@ function downloadReport() {
         <Download class="download-icon" />
       </button>
     </div>
-    
+
     <div class="report-tabs">
-      <button 
-        v-for="tab in reportTypes" 
+      <button
+        v-for="tab in reportTypes"
         :key="tab.id"
         class="tab-btn"
         :class="{ 'tab-active': activeTab === tab.id }"
-        @click="generateReport(tab.id)"
+        @click="tab.id === 'structured' ? (activeTab = tab.id) : generateReport(tab.id)"
       >
         <component :is="tab.icon" class="tab-icon" />
         <span>{{ tab.name }}</span>
         <Loader2 v-if="generating && activeTab === tab.id" class="tab-spinner" />
       </button>
     </div>
-    
+
     <div class="report-content">
-      <div v-if="!reportContent" class="content-empty">
+      <div v-if="activeTab === 'structured'" class="structured-content">
+        <div v-if="structuredSections.length === 0" class="content-empty">
+          <FileText class="empty-icon" />
+          <p>暂无结构化分析数据</p>
+        </div>
+        <div v-for="section in structuredSections" :key="section.id" class="section-item">
+          <div class="section-header" @click="toggleSection(section.id)">
+            <button class="expand-btn">
+              <ChevronDown v-if="expandedSections.has(section.id)" class="expand-icon" />
+              <ChevronRight v-else class="expand-icon" />
+            </button>
+            <h4 class="section-title">{{ section.title }}</h4>
+            <button class="copy-btn" @click.stop="copyContent(section.content)" title="复制内容">
+              <Copy class="copy-icon" />
+            </button>
+          </div>
+          <div v-if="expandedSections.has(section.id)" class="section-content">
+            <p>{{ section.content }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="!reportContent" class="content-empty">
         <FileText class="empty-icon" />
         <p>点击上方按钮生成报告</p>
       </div>
-      
+
       <div v-else-if="generating" class="content-loading">
         <Loader2 class="loading-icon" />
         <span>正在生成报告...</span>
       </div>
-      
+
       <div v-else class="content-body">
         <pre class="report-text">{{ reportContent }}</pre>
       </div>
@@ -195,8 +268,12 @@ function downloadReport() {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .report-content {

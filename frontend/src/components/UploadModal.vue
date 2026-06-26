@@ -1,8 +1,10 @@
 <script setup>import { ref } from 'vue';
 import { usePapersStore } from '@/stores/papers';
+import { useUserStore } from '@/stores/user';
 import { X, Upload, FileText, AlertCircle } from 'lucide-vue-next';
 const emit = defineEmits(['close']);
 const papersStore = usePapersStore();
+const userStore = useUserStore();
 const file = ref(null);
 const error = ref('');
 const acceptedTypes = ['application/pdf'];
@@ -44,6 +46,10 @@ function handleDrop(event) {
 async function handleUpload() {
  if (!file.value) {
  error.value = '请先选择文件';
+ return;
+ }
+ if (!userStore.config.llm_api_key) {
+ error.value = '请先在设置页配置 API Key';
  return;
  }
  try {

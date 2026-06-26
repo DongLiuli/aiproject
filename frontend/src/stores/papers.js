@@ -6,6 +6,39 @@ export const usePapersStore = defineStore('papers', () => {
   const currentPaper = ref(null)
   const loading = ref(false)
   const uploading = ref(false)
+  const pollingPaperId = ref(null)
+  let pollInterval = null
+
+  function startPolling(paperId) {
+    stopPolling()
+    pollingPaperId.value = paperId
+    pollInterval = setInterval(async () => {
+      try {
+        const response = await papersAPI.get(paperId)
+        const index = papers.value.findIndex((p) => p.paper_id === paperId)
+        if (index !== -1) {
+          papers.value[index] = response.items || response
+        }
+        if (currentPaper.value?.paper_id === paperId) {
+          currentPaper.value = response.items || response
+        }
+        const status = (response.items || response).parse_status
+        if (status === 'completed' || status === 'failed') {
+          stopPolling()
+        }
+      } catch (error) {
+        console.error('Polling error:', error)
+      }
+    }, 3000)
+  }
+
+  function stopPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval)
+      pollInterval = null
+    }
+    pollingPaperId.value = null
+  }
   async function fetchPapers() {
     loading.value = true
     try {
@@ -24,6 +57,9 @@ export const usePapersStore = defineStore('papers', () => {
       formData.append('file', file)
       const response = await papersAPI.upload(formData)
       await fetchPapers()
+      if (response.paper_id) {
+        startPolling(response.paper_id)
+      }
       return response
     } catch (error) {
       throw error
@@ -73,6 +109,7 @@ export const usePapersStore = defineStore('papers', () => {
     try {
       await papersAPI.reparse(paperId)
       await fetchPapers()
+      startPolling(paperId)
     } catch (error) {
       throw error
     }
@@ -82,12 +119,15 @@ export const usePapersStore = defineStore('papers', () => {
     currentPaper,
     loading,
     uploading,
+    pollingPaperId,
     fetchPapers,
     uploadPaper,
     getPaper,
     updatePaper,
     deletePaper,
     reparsePaper,
+    startPolling,
+    stopPolling,
   }
 })
 export const useQAStore = defineStore('qa', () => {

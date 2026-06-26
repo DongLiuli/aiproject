@@ -63,8 +63,8 @@ export const userAPI = {
     return api.put('/api/user/config', data)
   },
   
-  testConfig() {
-    return api.post('/api/user/config/test')
+  testConfig(data) {
+    return api.post('/api/user/config/test', data)
   },
 }
 

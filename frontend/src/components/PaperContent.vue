@@ -1,49 +1,37 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { BookOpen, ChevronDown, ChevronRight, Copy, Check } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, ChevronRight, Copy, FileText } from 'lucide-vue-next'
 
 const props = defineProps({
-  content: {
+  paper: {
     type: Object,
     default: () => ({}),
   },
 })
 
-const expandedSections = ref(new Set(['research_background']))
+const expandedSections = ref(new Set())
 
-const sections = computed(() => {
+const paperSections = computed(() => {
   const items = []
 
-  if (props.content.research_background) {
-    items.push({
-      id: 'research_background',
-      title: '研究背景',
-      content: props.content.research_background,
+  if (props.paper.sections && Array.isArray(props.paper.sections)) {
+    props.paper.sections.forEach((section, index) => {
+      if (section.title || section.content) {
+        items.push({
+          id: `section-${index}`,
+          title: section.title || `章节 ${index + 1}`,
+          content: section.content || '',
+        })
+      }
     })
   }
 
-  if (props.content.research_questions) {
+  if (props.paper.full_text && items.length === 0) {
     items.push({
-      id: 'research_questions',
-      title: '研究问题',
-      content: props.content.research_questions,
+      id: 'full-text',
+      title: '全文',
+      content: props.paper.full_text,
     })
-  }
-
-  if (props.content.method_flow) {
-    items.push({ id: 'method_flow', title: '方法流程', content: props.content.method_flow })
-  }
-
-  if (props.content.experiment_design) {
-    items.push({ id: 'experiment', title: '实验设计', content: props.content.experiment_design })
-  }
-
-  if (props.content.experiment_results) {
-    items.push({ id: 'results', title: '实验结果', content: props.content.experiment_results })
-  }
-
-  if (props.content.innovations) {
-    items.push({ id: 'innovations', title: '创新点', content: props.content.innovations })
   }
 
   return items
@@ -75,7 +63,12 @@ async function copyContent(content) {
     </div>
 
     <div class="content-sections">
-      <div v-for="section in sections" :key="section.id" class="section-item">
+      <div v-if="paperSections.length === 0" class="empty-state">
+        <FileText class="empty-icon" />
+        <p>暂无论文内容</p>
+      </div>
+
+      <div v-for="section in paperSections" :key="section.id" class="section-item">
         <div class="section-header" @click="toggleSection(section.id)">
           <button class="expand-btn">
             <ChevronDown v-if="expandedSections.has(section.id)" class="expand-icon" />
@@ -124,6 +117,26 @@ async function copyContent(content) {
 
 .content-sections {
   padding: 8px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  color: #999;
+}
+
+.empty-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 16px;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 0.9375rem;
 }
 
 .section-item {
