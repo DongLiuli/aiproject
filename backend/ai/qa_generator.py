@@ -22,6 +22,18 @@ def generate_answer(paper_id: str, question: str, conversation_history: Optional
         return {"success": False, "error": "LLM 客户端未提供"}
     
     try:
+        # 从数据库查询分块数据
+        chunks_data = []
+        try:
+            from app.models import get_db, Chunk
+            db = next(get_db())
+            chunks_data = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+        except ImportError:
+            return {"success": False, "error": "无法连接数据库"}
+        
+        if not chunks_data:
+            return {"success": False, "error": "论文尚未解析或无分块数据"}
+        
         # 如果有对话历史，先改写问题
         if conversation_history and len(conversation_history) > 0:
             rewritten_question = _rewrite_question(question, conversation_history, llm_client)
@@ -29,7 +41,7 @@ def generate_answer(paper_id: str, question: str, conversation_history: Optional
             rewritten_question = question
         
         # 检索相关分块
-        chunks = search_chunks(paper_id, rewritten_question, k=SEARCH_CONFIG["top_k"])
+        chunks = search_chunks(paper_id, rewritten_question, k=SEARCH_CONFIG["top_k"], chunks_data=chunks_data)
         
         if not chunks:
             return {

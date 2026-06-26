@@ -52,6 +52,18 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
         return {"success": False, "error": "无效的报告类型"}
     
     try:
+        # 从数据库查询分块数据
+        chunks_data = []
+        try:
+            from app.models import get_db, Chunk
+            db = next(get_db())
+            chunks_data = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+        except ImportError:
+            return {"success": False, "error": "无法连接数据库"}
+        
+        if not chunks_data:
+            return {"success": False, "error": "论文尚未解析或无分块数据"}
+        
         lang = detect_language(paper_text)
         
         if report_type == "quick":
@@ -69,7 +81,7 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
         seen_content = set()
         
         for query in queries:
-            chunks = search_chunks(paper_id, query, k=SEARCH_CONFIG["top_k"])
+            chunks = search_chunks(paper_id, query, k=SEARCH_CONFIG["top_k"], chunks_data=chunks_data)
             for chunk in chunks:
                 # 去重
                 if chunk["content"] not in seen_content:
