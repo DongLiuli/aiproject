@@ -8,7 +8,7 @@ import os
 
 
 def generate_answer(paper_id: str, question: str, conversation_history: Optional[List[Dict[str, Any]]] = None, 
-                    llm_client: LLMClient = None) -> Dict[str, Any]:
+                    llm_client: LLMClient = None, chunks_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     生成论文问答答案
     
@@ -16,12 +16,25 @@ def generate_answer(paper_id: str, question: str, conversation_history: Optional
     :param question: 用户问题
     :param conversation_history: 对话历史（可选）
     :param llm_client: LLM 客户端
+    :param chunks_data: 分块数据（可选，外部传入以解耦数据库依赖）
     :return: 问答结果
     """
     if not llm_client:
         return {"success": False, "error": "LLM 客户端未提供"}
     
     try:
+        # 如果未传入分块数据，从数据库查询
+        if chunks_data is None:
+            try:
+                from app.models import get_db, Chunk
+                db = next(get_db())
+                chunks_data = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+            except ImportError:
+                return {"success": False, "error": "无法连接数据库"}
+        
+        if not chunks_data:
+            return {"success": False, "error": "论文尚未解析或无分块数据"}
+        
         # 如果有对话历史，先改写问题
         if conversation_history and len(conversation_history) > 0:
             rewritten_question = _rewrite_question(question, conversation_history, llm_client)
@@ -29,7 +42,7 @@ def generate_answer(paper_id: str, question: str, conversation_history: Optional
             rewritten_question = question
         
         # 检索相关分块
-        chunks = search_chunks(paper_id, rewritten_question, k=SEARCH_CONFIG["top_k"])
+        chunks = search_chunks(paper_id, rewritten_question, k=SEARCH_CONFIG["top_k"], chunks_data=chunks_data)
         
         if not chunks:
             return {

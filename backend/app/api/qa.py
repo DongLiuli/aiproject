@@ -39,6 +39,9 @@ def ask_question(paper_id: str, body: AskRequest, user_id: str = Depends(get_cur
     if not api_key:
         raise HTTPException(400, detail={"error": {"code": "NO_API_KEY", "message": "请先在设置页配置 API Key"}})
 
+    model_preference = user.model_preference if user else "deepseek-chat"
+    provider = "qwen" if model_preference == "qwen-turbo" else "deepseek"
+
     # 加载对话历史
     conversation_history = None
     if body.conversation_id:
@@ -51,7 +54,7 @@ def ask_question(paper_id: str, body: AskRequest, user_id: str = Depends(get_cur
     from ai.llm_client import LLMClient
     from ai.qa_generator import generate_answer
 
-    llm_client = LLMClient(api_key=api_key)
+    llm_client = LLMClient(api_key=api_key, provider=provider)
     result = generate_answer(paper_id, body.question, conversation_history, llm_client)
 
     if not result.get("success"):

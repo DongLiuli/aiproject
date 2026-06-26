@@ -57,23 +57,27 @@ def _build_extraction_prompt(full_text: str, sections: List[Dict[str, Any]]) -> 
 {{
     "title": "论文标题",
     "authors": ["作者1", "作者2"],
-    "research_background": "研究背景",
-    "research_questions": "研究问题",
+    "affiliation": "作者单位",
+    "year": "发表年份",
+    "doi": "DOI编号",
+    "abstract": "摘要",
+    "keywords": ["关键词1", "关键词2"],
+    "research_background": "研究背景与动机",
+    "research_questions": "研究问题与目标",
     "method_flow": "方法流程",
-    "model_algorithm": "模型算法",
+    "model_algorithm": "模型或算法名称",
     "dataset_info": "数据集信息",
     "evaluation_metrics": ["指标1", "指标2"],
-    "experiment_results": "实验结果",
+    "experiment_results": "主要实验结果",
     "innovations": ["创新点1", "创新点2"],
     "limitations": ["局限性1", "局限性2"],
-    "future_work": "未来工作",
-    "keywords": ["关键词1", "关键词2"]
+    "future_work": "未来工作"
 }}
 
 注意：
 1. 严格按照 JSON 格式输出，不要包含其他内容
 2. 如果某些字段无法从论文中提取，请设为空字符串或空列表
-3. evaluation_metrics 和 innovations、limitations 必须是数组格式
+3. evaluation_metrics、innovations、limitations、keywords、authors 必须是数组格式
 """
     
     # 获取章节摘要
@@ -94,6 +98,11 @@ def _parse_non_json_response(response: str) -> Dict[str, Any]:
     result = {
         "title": "",
         "authors": [],
+        "affiliation": "",
+        "year": "",
+        "doi": "",
+        "abstract": "",
+        "keywords": [],
         "research_background": "",
         "research_questions": "",
         "method_flow": "",
@@ -103,13 +112,16 @@ def _parse_non_json_response(response: str) -> Dict[str, Any]:
         "experiment_results": "",
         "innovations": [],
         "limitations": [],
-        "future_work": "",
-        "keywords": []
+        "future_work": ""
     }
     
     # 尝试提取字段
     patterns = {
         "title": r'"title"\s*[:=]\s*["\'](.+?)["\']',
+        "affiliation": r'"affiliation"\s*[:=]\s*["\'](.+?)["\']',
+        "year": r'"year"\s*[:=]\s*["\'](.+?)["\']',
+        "doi": r'"doi"\s*[:=]\s*["\'](.+?)["\']',
+        "abstract": r'"abstract"\s*[:=]\s*["\'](.+?)["\']',
         "research_background": r'"research_background"\s*[:=]\s*["\'](.+?)["\']',
         "research_questions": r'"research_questions"\s*[:=]\s*["\'](.+?)["\']',
         "method_flow": r'"method_flow"\s*[:=]\s*["\'](.+?)["\']',
@@ -125,7 +137,7 @@ def _parse_non_json_response(response: str) -> Dict[str, Any]:
             result[key] = match.group(1)
     
     # 提取数组类型字段
-    array_fields = ["authors", "evaluation_metrics", "innovations", "limitations", "keywords"]
+    array_fields = ["authors", "keywords", "evaluation_metrics", "innovations", "limitations"]
     for field in array_fields:
         pattern = rf'"{field}"\s*[:=]\s*\[([^\]]+)\]'
         match = re.search(pattern, response)

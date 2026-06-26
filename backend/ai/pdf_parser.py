@@ -166,12 +166,16 @@ def parse_pdf(file_path: str) -> Dict[str, Any]:
     page_count = len(doc)
     doc.close()
     
+    # 拆分参考文献
+    references = _split_references(references_raw)
+    
     return {
         "success": True,
         "full_text": full_text.strip(),
         "sections": sections,
         "figures_tables": figures_tables,
         "references_raw": references_raw.strip(),
+        "references": references,
         "page_count": page_count
     }
 
@@ -312,7 +316,7 @@ def _extract_text_from_blocks(blocks: List[Tuple]) -> str:
 
 def _detect_figures_tables(page: fitz.Page, page_num: int, start_index: int) -> List[Dict[str, Any]]:
     """
-    检测页面中的图片和表格
+    检测页面中的图片和表格，并提取真实的图题/表题文本
     
     :param page: 页面对象
     :param page_num: 页码
@@ -321,25 +325,84 @@ def _detect_figures_tables(page: fitz.Page, page_num: int, start_index: int) -> 
     """
     figures_tables = []
     
-    # 检测图片
-    images = page.get_images(full=True)
-    for i, img in enumerate(images):
-        figures_tables.append({
-            "number": f"Fig.{start_index + len(figures_tables) + 1}",
-            "title": f"图片 {start_index + len(figures_tables) + 1}",
-            "page": page_num + 1,
-            "type": "image"
-        })
+    # 获取页面文本用于提取图题/表题
+    page_text = page.get_text("text")
     
-    # 检测表格
+    # 图题匹配模式（支持多种格式）
+    figure_patterns = [
+        r'(Figure\s+\d+[:：]\s*.+?)(?=\n\n|\nFigure|\nTable|\Z)',
+        r'(Fig\.\s*\d+[:：]\s*.+?)(?=\n\n|\nFigure|\nTable|\Z)',
+        r'(图\s*\d+[:：]\s*.+?)(?=\n\n|\n图|\n表|\Z)'
+    ]
+    
+    # 表题匹配模式
+    table_patterns = [
+        r'(Table\s+\d+[:：]\s*.+?)(?=\n\n|\nFigure|\nTable|\Z)',
+        r'(表\s*\d+[:：]\s*.+?)(?=\n\n|\n图|\n表|\Z)'
+    ]
+    
+    # 检测图片并提取图题
+    images = page.get_images(full=True)
+    detected_figures = []
+    
+    for pattern in figure_patterns:
+        matches = re.finditer(pattern, page_text, re.DOTALL)
+        for match in matches:
+            full_match = match.group(1).strip()
+            # 提取编号（如 Figure 1, Fig. 2, 图 3）
+            num_match = re.match(r'(Figure\s+\d+|Fig\.\s*\d+|图\s*\d+)', full_match, re.IGNORECASE)
+            if num_match:
+                detected_figures.append({
+                    "number": num_match.group(1).strip(),
+                    "title": full_match[len(num_match.group(1)):].replace(':', '').replace('：', '').strip()
+                })
+    
+    for i, img in enumerate(images):
+        if i < len(detected_figures):
+            figures_tables.append({
+                "number": detected_figures[i]["number"],
+                "title": detected_figures[i]["title"],
+                "page": page_num + 1,
+                "type": "image"
+            })
+        else:
+            figures_tables.append({
+                "number": f"Fig.{start_index + len(figures_tables) + 1}",
+                "title": f"图片 {start_index + len(figures_tables) + 1}",
+                "page": page_num + 1,
+                "type": "image"
+            })
+    
+    # 检测表格并提取表题
     tables = page.find_tables()
+    detected_tables = []
+    
+    for pattern in table_patterns:
+        matches = re.finditer(pattern, page_text, re.DOTALL)
+        for match in matches:
+            full_match = match.group(1).strip()
+            num_match = re.match(r'(Table\s+\d+|表\s*\d+)', full_match, re.IGNORECASE)
+            if num_match:
+                detected_tables.append({
+                    "number": num_match.group(1).strip(),
+                    "title": full_match[len(num_match.group(1)):].replace(':', '').replace('：', '').strip()
+                })
+    
     for i, table in enumerate(tables):
-        figures_tables.append({
-            "number": f"Table.{start_index + len(figures_tables) + 1}",
-            "title": f"表格 {start_index + len(figures_tables) + 1}",
-            "page": page_num + 1,
-            "type": "table"
-        })
+        if i < len(detected_tables):
+            figures_tables.append({
+                "number": detected_tables[i]["number"],
+                "title": detected_tables[i]["title"],
+                "page": page_num + 1,
+                "type": "table"
+            })
+        else:
+            figures_tables.append({
+                "number": f"Table.{start_index + len(figures_tables) + 1}",
+                "title": f"表格 {start_index + len(figures_tables) + 1}",
+                "page": page_num + 1,
+                "type": "table"
+            })
     
     return figures_tables
 
@@ -374,6 +437,65 @@ def _is_header_footer(text: str, page_num: int) -> bool:
             return True
     
     return False
+
+
+def _split_references(references_raw: str) -> List[Dict[str, Any]]:
+    """
+    将参考文献原始文本逐条拆分为结构化列表
+    
+    :param references_raw: 参考文献原始文本
+    :return: 参考文献条目列表
+    """
+    references = []
+    
+    if not references_raw.strip():
+        return references
+    
+    # 参考文献编号模式（支持多种格式）
+    # 格式1: [1] Author. Title. Journal, Year.
+    # 格式2: 1. Author. Title. Journal, Year.
+    # 格式3: [1] Author, Title, Journal, Year.
+    reference_patterns = [
+        r'(\[\d+\])\s*(.+?)(?=\[\d+\]|\Z)',
+        r'(\d+\.)\s*(.+?)(?=\d+\.|\Z)'
+    ]
+    
+    for pattern in reference_patterns:
+        matches = re.finditer(pattern, references_raw, re.DOTALL)
+        for match in matches:
+            number = match.group(1).strip()
+            content = match.group(2).strip()
+            if content:
+                references.append({
+                    "number": number,
+                    "content": content
+                })
+    
+    # 如果没有匹配到任何模式，按换行尝试拆分
+    if not references:
+        lines = references_raw.split('\n')
+        current_ref = ""
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # 检测是否是新条目（以数字或 [数字] 开头）
+            if re.match(r'^\[\d+\]|\d+\.', line):
+                if current_ref:
+                    references.append({
+                        "number": "",
+                        "content": current_ref.strip()
+                    })
+                current_ref = line
+            else:
+                current_ref += " " + line
+        if current_ref:
+            references.append({
+                "number": "",
+                "content": current_ref.strip()
+            })
+    
+    return references
 
 
 def chunk_text(text: str, section_title: str = "", page_number: int = 0) -> List[Dict[str, Any]]:

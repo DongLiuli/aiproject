@@ -134,7 +134,8 @@ def update_user_config(body: UpdateConfigRequest, user_id: str = Depends(get_cur
 def test_api_connection(body: TestConfigRequest, user_id: str = Depends(get_current_user)):
     """测试 API Key 连接"""
     from ai.llm_client import LLMClient
-    client = LLMClient(api_key=body.api_key, provider="deepseek")
+    provider = "qwen" if body.model == "qwen-turbo" else "deepseek"
+    client = LLMClient(api_key=body.api_key, provider=provider)
     result = client.test_connection()
 
     if result["success"]:
