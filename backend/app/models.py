@@ -7,7 +7,13 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 from .config import DATABASE_URL
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=3600,
+    echo=False,  # 生产环境关闭 SQL 日志
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -27,12 +33,12 @@ def get_db():
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(String, primary_key=True, default=generate_uuid)
-    username = Column(String, nullable=True, unique=True)
-    password_hash = Column(String, nullable=True)
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    username = Column(String(100), nullable=True, unique=True)
+    password_hash = Column(String(255), nullable=True)
     is_anonymous = Column(Boolean, default=False)
     api_key_encrypted = Column(Text, nullable=True)
-    model_preference = Column(String, nullable=True)
+    model_preference = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # 关联
@@ -51,9 +57,9 @@ class User(Base):
 class Admin(Base):
     __tablename__ = "admins"
 
-    id = Column(String, primary_key=True, default=generate_uuid)
-    username = Column(String, unique=True, nullable=False)
-    password_hash = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    username = Column(String(100), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -67,19 +73,19 @@ class Admin(Base):
 class Paper(Base):
     __tablename__ = "papers"
 
-    paper_id = Column(String, primary_key=True, default=generate_uuid)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    title = Column(String, nullable=True)
+    paper_id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    title = Column(String(500), nullable=True)
     authors = Column(JSON, nullable=True)       # list[str]
-    file_name = Column(String, nullable=False)
+    file_name = Column(String(500), nullable=False)
     file_size = Column(Integer, nullable=False)
-    file_path = Column(String, nullable=False)
+    file_path = Column(String(1000), nullable=False)
     upload_time = Column(DateTime, default=datetime.utcnow)
-    parse_status = Column(String, default="pending")  # pending / parsing / completed / failed
+    parse_status = Column(String(20), default="pending")  # pending / parsing / completed / failed
     parse_error = Column(Text, nullable=True)
-    field = Column(String, nullable=True)       # 学科方向
+    field = Column(String(200), nullable=True)       # 学科方向
     tags = Column(JSON, nullable=True)           # list[str]
-    read_status = Column(String, default="unread")  # unread / skimmed / read / noted
+    read_status = Column(String(20), default="unread")  # unread / skimmed / read / noted
 
     # 关联
     user = relationship("User", back_populates="papers")
@@ -107,12 +113,12 @@ class Paper(Base):
 class PaperStructuredInfo(Base):
     __tablename__ = "paper_structured_info"
 
-    id = Column(String, primary_key=True, default=generate_uuid)
-    paper_id = Column(String, ForeignKey("papers.paper_id"), unique=True, nullable=False)
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    paper_id = Column(String(36), ForeignKey("papers.paper_id"), unique=True, nullable=False)
     research_background = Column(Text, nullable=True)
     research_questions = Column(Text, nullable=True)
     method_flow = Column(Text, nullable=True)
-    model_algorithm = Column(String, nullable=True)
+    model_algorithm = Column(String(500), nullable=True)
     dataset_info = Column(Text, nullable=True)
     evaluation_metrics = Column(JSON, nullable=True)
     experiment_results = Column(Text, nullable=True)
@@ -161,9 +167,9 @@ class PaperStructuredInfo(Base):
 class Chunk(Base):
     __tablename__ = "chunks"
 
-    chunk_id = Column(String, primary_key=True, default=generate_uuid)
-    paper_id = Column(String, ForeignKey("papers.paper_id"), nullable=False)
-    section_title = Column(String, nullable=True)
+    chunk_id = Column(String(36), primary_key=True, default=generate_uuid)
+    paper_id = Column(String(36), ForeignKey("papers.paper_id"), nullable=False)
+    section_title = Column(String(500), nullable=True)
     page_number = Column(Integer, nullable=True)
     paragraph_index = Column(Integer, nullable=True)
     content = Column(Text, nullable=False)
@@ -174,9 +180,9 @@ class Chunk(Base):
 class Conversation(Base):
     __tablename__ = "conversations"
 
-    conversation_id = Column(String, primary_key=True, default=generate_uuid)
-    paper_id = Column(String, ForeignKey("papers.paper_id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    conversation_id = Column(String(36), primary_key=True, default=generate_uuid)
+    paper_id = Column(String(36), ForeignKey("papers.paper_id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     paper = relationship("Paper", back_populates="conversations")
@@ -188,8 +194,8 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    conversation_id = Column(String, ForeignKey("conversations.conversation_id"), nullable=False)
-    role = Column(String, nullable=False)  # user / assistant
+    conversation_id = Column(String(36), ForeignKey("conversations.conversation_id"), nullable=False)
+    role = Column(String(20), nullable=False)  # user / assistant
     content = Column(Text, nullable=False)
     sources = Column(JSON, nullable=True)  # list[dict] — 仅 assistant 消息有
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -200,10 +206,10 @@ class Message(Base):
 class Report(Base):
     __tablename__ = "reports"
 
-    report_id = Column(String, primary_key=True, default=generate_uuid)
-    paper_id = Column(String, ForeignKey("papers.paper_id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    report_type = Column(String, nullable=False)  # quick / method / experiment
+    report_id = Column(String(36), primary_key=True, default=generate_uuid)
+    paper_id = Column(String(36), ForeignKey("papers.paper_id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    report_type = Column(String(20), nullable=False)  # quick / method / experiment
     content = Column(Text, nullable=False)
-    format = Column(String, default="markdown")
+    format = Column(String(20), default="markdown")
     generated_at = Column(DateTime, default=datetime.utcnow)
