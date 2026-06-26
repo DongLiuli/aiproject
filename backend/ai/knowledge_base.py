@@ -136,10 +136,12 @@ def search_chunks(paper_id: str, query: str, k: int = 5, chunks_data: List[Dict[
             chunks = chunks_data
         else:
             try:
-                from ..app.models import get_db, Chunk
+                from app.models import get_db, Chunk
                 db = next(get_db())
-                chunks = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.id).all()
-            except ImportError:
+                chunks = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+            except ImportError as e:
+                import logging
+                logging.error(f"search_chunks DB import error: {str(e)}")
                 return []
         
         results = []
@@ -164,4 +166,6 @@ def search_chunks(paper_id: str, query: str, k: int = 5, chunks_data: List[Dict[
         return results
     
     except Exception as e:
+        import logging
+        logging.error(f"search_chunks error: {str(e)}")
         return []

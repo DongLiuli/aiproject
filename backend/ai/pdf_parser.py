@@ -252,7 +252,7 @@ def _sort_blocks(blocks: List[Tuple]) -> List[Tuple]:
     block_info = []
     for block in blocks:
         x0, y0, x1, y1, content, block_type, block_no = block
-        if block_type == 0:  # 文本块
+        if content.strip():  # 只要有文本内容就处理
             block_info.append({
                 "block": block,
                 "y0": y0,
@@ -304,7 +304,7 @@ def _extract_text_from_blocks(blocks: List[Tuple]) -> str:
     
     for block in blocks:
         x0, y0, x1, y1, content, block_type, block_no = block
-        if block_type == 0:  # 文本块
+        if content.strip():  # 只要有文本内容就提取
             text_parts.append(content)
     
     return "\n\n".join(text_parts)
@@ -352,13 +352,15 @@ def _is_header_footer(text: str, page_num: int) -> bool:
     :param page_num: 页码
     :return: 是否是页眉页脚
     """
-    # 短文本且包含页码
-    if len(text) < 50 and str(page_num + 1) in text:
+    text = text.strip()
+    page_str = str(page_num + 1)
+    
+    # 只有页码数字的情况（如 "1", "2", " 3 "）
+    if text == page_str or re.match(r'^\s*\d+\s*$', text):
         return True
     
     # 常见页眉页脚模式
     header_footer_patterns = [
-        r'^\d+$',  # 只有页码
         r'^Page\s+\d+$',  # Page 1
         r'^第\s*\d+\s*页$',  # 第1页
         r'^\d+\s*/\s*\d+$',  # 1/10
@@ -368,7 +370,7 @@ def _is_header_footer(text: str, page_num: int) -> bool:
     ]
     
     for pattern in header_footer_patterns:
-        if re.match(pattern, text.strip()):
+        if re.match(pattern, text):
             return True
     
     return False
