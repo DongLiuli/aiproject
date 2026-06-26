@@ -19,3 +19,4 @@ requests>=2.31.0
 pycryptodome>=3.20.0
 pymysql>=1.1.0
 cryptography>=42.0.0
+alembic>=1.13.0

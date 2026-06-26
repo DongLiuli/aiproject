@@ -115,19 +115,19 @@ class PaperStructuredInfo(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     paper_id = Column(String(36), ForeignKey("papers.paper_id"), unique=True, nullable=False)
-    research_background = Column(Text, nullable=True)
-    research_questions = Column(Text, nullable=True)
-    method_flow = Column(Text, nullable=True)
+    research_background = Column(Text(length=16777215), nullable=True)   # MEDIUMTEXT
+    research_questions = Column(Text(length=16777215), nullable=True)    # MEDIUMTEXT
+    method_flow = Column(Text(length=16777215), nullable=True)           # MEDIUMTEXT
     model_algorithm = Column(String(500), nullable=True)
-    dataset_info = Column(Text, nullable=True)
+    dataset_info = Column(Text(length=16777215), nullable=True)          # MEDIUMTEXT
     evaluation_metrics = Column(JSON, nullable=True)
-    experiment_results = Column(Text, nullable=True)
-    innovations = Column(Text, nullable=True)
-    limitations = Column(Text, nullable=True)
-    future_work = Column(Text, nullable=True)
+    experiment_results = Column(Text(length=16777215), nullable=True)    # MEDIUMTEXT
+    innovations = Column(Text(length=16777215), nullable=True)           # MEDIUMTEXT
+    limitations = Column(Text(length=16777215), nullable=True)           # MEDIUMTEXT
+    future_work = Column(Text(length=16777215), nullable=True)           # MEDIUMTEXT
     figures_tables = Column(JSON, nullable=True)   # list[dict]
     references = Column(JSON, nullable=True)        # list[dict]
-    full_text = Column(Text, nullable=True)         # 提取的原文文本
+    full_text = Column(Text(length=4294967295), nullable=True)  # 提取的原文文本（MySQL 下为 LONGTEXT）
     sections = Column(JSON, nullable=True)          # list[dict]
     extracted_at = Column(DateTime, default=datetime.utcnow)
 
