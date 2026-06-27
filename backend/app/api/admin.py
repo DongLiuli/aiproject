@@ -4,7 +4,6 @@
 """
 import os
 import uuid
-import shutil
 import json
 import logging
 from datetime import datetime, timedelta
@@ -70,11 +69,23 @@ def get_current_admin(
 
 
 def _get_db_size() -> int:
-    """获取数据库文件大小（字节）"""
-    db_path = os.path.join(DATA_DIR, "literature.db")
-    if os.path.exists(db_path):
-        return os.path.getsize(db_path)
-    return 0
+    """通过网络查询获取 MySQL 数据库数据+索引总大小（字节），失败返回估算值"""
+    try:
+        from sqlalchemy import text
+        from ..models import engine
+        with engine.connect() as conn:
+            # MySQL: 查询 information_schema 获取数据库大小
+            db_name = engine.url.database
+            row = conn.execute(text(
+                "SELECT COALESCE(SUM(data_length + index_length), 0) "
+                "FROM information_schema.tables "
+                "WHERE table_schema = :db_name"
+            ), {"db_name": db_name}).fetchone()
+            if row and row[0]:
+                return int(row[0])
+            return 0
+    except Exception:
+        return 0
 
 
 def _get_uploads_size() -> int:
@@ -316,28 +327,20 @@ def clear_user_papers(user_id: str, admin_id: str = Depends(get_current_admin)):
 
 @router.get("/db/info")
 def get_db_info(admin_id: str = Depends(get_current_admin)):
-    """数据库信息：表列表、行数、文件大小"""
-    db = next(get_db())
-    from sqlalchemy import text
-    # 增强版表列表（含列定义）
-    tables = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")).fetchall()
+    """数据库信息：表列表、行数、连接信息"""
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+    from ..models import engine
+    insp = sa_inspect(engine)
+    table_names = sorted(insp.get_table_names())
     table_info = []
-    for t in tables:
-        name = t[0]
-        count = db.execute(text(f"SELECT COUNT(*) FROM [{name}]")).scalar()
-        cols = db.execute(text(f"PRAGMA table_info([{name}])")).fetchall()
-        columns = []
-        for c in cols:
-            col_info = {
-                "name": c[1],
-                "type": c[2] or "TEXT",
-                "nullable": not c[3],
-                "pk": bool(c[5]),
-            }
-            columns.append(col_info)
-        table_info.append({"name": name, "rows": count, "columns": columns})
+    with engine.connect() as conn:
+        for name in table_names:
+            count = conn.execute(sa_text(f"SELECT COUNT(*) FROM `{name}`")).scalar()
+            columns = _columns_to_info(insp, name)
+            table_info.append({"name": name, "rows": count, "columns": columns})
+    db_url = engine.url
     return {
-        "database_file": os.path.join(DATA_DIR, "literature.db"),
+        "database_file": f"{db_url.host}:{db_url.port}/{db_url.database}",
         "size_bytes": _get_db_size(),
         "size_mb": f"{_get_db_size() / 1024 / 1024:.2f} MB",
         "tables": table_info,
@@ -346,16 +349,37 @@ def get_db_info(admin_id: str = Depends(get_current_admin)):
 
 @router.post("/db/backup")
 def backup_database(admin_id: str = Depends(get_current_admin)):
-    """备份数据库文件（复制到 data/backups/ 目录）"""
+    """备份数据库：将所有表数据导出为 JSON 文件，保存到 data/backups/ 目录"""
     backup_dir = os.path.join(DATA_DIR, "backups")
     os.makedirs(backup_dir, exist_ok=True)
-    src = os.path.join(DATA_DIR, "literature.db")
-    if not os.path.exists(src):
-        raise HTTPException(404, detail={"error": {"code": "DB_NOT_FOUND", "message": "数据库文件不存在"}})
+
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+    from ..models import engine, Base
+    insp = sa_inspect(engine)
+    table_names = sorted(insp.get_table_names())
+
+    dump = {}
+    with engine.connect() as conn:
+        for table_name in table_names:
+            rows = conn.execute(sa_text(f"SELECT * FROM `{table_name}`")).fetchall()
+            cols = [c["name"] for c in insp.get_columns(table_name)]
+            dump[table_name] = []
+            for row in rows:
+                item = {}
+                for i, col in enumerate(cols):
+                    val = row[i] if i < len(row) else None
+                    if isinstance(val, datetime):
+                        val = val.isoformat()
+                    item[col] = val
+                dump[table_name].append(item)
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst = os.path.join(backup_dir, f"literature_backup_{ts}.db")
-    shutil.copy2(src, dst)
-    return {"backup_path": dst, "size_bytes": os.path.getsize(dst), "created_at": datetime.now().isoformat()}
+    dst = os.path.join(backup_dir, f"literature_backup_{ts}.json")
+    with open(dst, "w", encoding="utf-8") as f:
+        json.dump(dump, f, ensure_ascii=False, indent=2, default=str)
+
+    backup_size = os.path.getsize(dst)
+    return {"backup_path": dst, "size_bytes": backup_size, "created_at": datetime.now().isoformat()}
 
 
 @router.get("/db/backups")
@@ -379,23 +403,74 @@ def list_backups(admin_id: str = Depends(get_current_admin)):
 
 @router.post("/db/restore")
 def restore_database(filename: str, admin_id: str = Depends(get_current_admin)):
-    """从备份恢复数据库（会覆盖当前数据库，请谨慎操作）"""
+    """从 JSON 备份恢复数据库（会清空并重建当前数据，请谨慎操作）"""
     backup_dir = os.path.join(DATA_DIR, "backups")
     src = os.path.join(backup_dir, filename)
     if not os.path.exists(src):
         raise HTTPException(404, detail={"error": {"code": "BACKUP_NOT_FOUND", "message": "备份文件不存在"}})
-    dst = os.path.join(DATA_DIR, "literature.db")
-    # 恢复前先自动备份当前库
+
+    with open(src, "r", encoding="utf-8") as f:
+        dump = json.load(f)
+
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+    from ..models import engine, Base
+    insp = sa_inspect(engine)
+
+    # 当前备份（JSON）
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pre_restore = os.path.join(backup_dir, f"pre_restore_{ts}.db")
-    if os.path.exists(dst):
-        shutil.copy2(dst, pre_restore)
-    shutil.copy2(src, dst)
+    pre_restore = os.path.join(backup_dir, f"pre_restore_{ts}.json")
+    # 导出当前数据
+    current_dump = {}
+    with engine.connect() as conn:
+        for table_name in sorted(insp.get_table_names()):
+            rows = conn.execute(sa_text(f"SELECT * FROM `{table_name}`")).fetchall()
+            cols = [c["name"] for c in insp.get_columns(table_name)]
+            current_dump[table_name] = []
+            for row in rows:
+                item = {}
+                for i, col in enumerate(cols):
+                    val = row[i] if i < len(row) else None
+                    if isinstance(val, datetime):
+                        val = val.isoformat()
+                    item[col] = val
+                current_dump[table_name].append(item)
+    with open(pre_restore, "w", encoding="utf-8") as f:
+        json.dump(current_dump, f, ensure_ascii=False, indent=2, default=str)
+
+    # 临时禁用外键约束，清空表后重新导入
+    with engine.connect() as conn:
+        tx = conn.begin()
+        try:
+            conn.execute(sa_text("SET FOREIGN_KEY_CHECKS = 0"))
+            # 反向遍历以防外键依赖
+            for table_name in reversed(list(dump.keys())):
+                if table_name not in insp.get_table_names():
+                    continue
+                conn.execute(sa_text(f"DELETE FROM `{table_name}`"))
+            for table_name, rows in dump.items():
+                if not rows or table_name not in insp.get_table_names():
+                    continue
+                cols = [c["name"] for c in insp.get_columns(table_name)]
+                for item in rows:
+                    filtered = {k: item.get(k) for k in cols if k in item}
+                    placeholders = ", ".join(f":{k}" for k in filtered)
+                    col_list = ", ".join(f"`{k}`" for k in filtered)
+                    conn.execute(
+                        sa_text(f"INSERT INTO `{table_name}` ({col_list}) VALUES ({placeholders})"),
+                        filtered
+                    )
+            conn.execute(sa_text("SET FOREIGN_KEY_CHECKS = 1"))
+            tx.commit()
+        except Exception:
+            tx.rollback()
+            conn.execute(sa_text("SET FOREIGN_KEY_CHECKS = 1"))
+            raise
+
     return {
         "restored": True,
         "from": filename,
         "pre_restore_backup": pre_restore,
-        "note": "请重启服务器使数据库生效"
+        "note": "恢复完成，无需重启服务器"
     }
 
 
@@ -453,60 +528,72 @@ _SENSITIVE_COLUMNS = {
 }
 
 
-def _get_table_columns(db, table_name: str) -> list[dict]:
-    """获取表的所有列信息，排除敏感列"""
-    from sqlalchemy import text
-    cols = db.execute(text(f"PRAGMA table_info([{table_name}])")).fetchall()
+def _columns_to_info(insp, table_name: str) -> list[dict]:
+    """从 SQLAlchemy 内省结果组装列信息（标记主键、排除敏感列）"""
+    cols = insp.get_columns(table_name)
+    pk_cols = set(insp.get_pk_constraint(table_name).get("constrained_columns", []))
     sensitive = _SENSITIVE_COLUMNS.get(table_name, [])
     result = []
     for c in cols:
-        col_name = c[1]
+        col_name = c["name"]
         if col_name in sensitive:
             continue
         result.append({
             "name": col_name,
-            "type": c[2] or "TEXT",
-            "nullable": not c[3],
-            "pk": bool(c[5]),
+            "type": str(c["type"]),
+            "nullable": c.get("nullable", True),
+            "pk": col_name in pk_cols,
         })
     return result
 
 
+def _get_table_columns(db, table_name: str) -> list[dict]:
+    """获取表的所有列信息（通过 SQLAlchemy 内省，兼容 MySQL），排除敏感列"""
+    from sqlalchemy import inspect as sa_inspect
+    from ..models import engine
+    insp = sa_inspect(engine)
+    return _columns_to_info(insp, table_name)
+
+
 def _get_primary_key(db, table_name: str) -> str:
-    """返回表的主键列名，没有则返回第一列"""
-    from sqlalchemy import text
-    cols = db.execute(text(f"PRAGMA table_info([{table_name}])")).fetchall()
-    for c in cols:
-        if c[5]:
-            return c[1]
-    return cols[0][1] if cols else "id"
+    """返回表的主键列名（通过 SQLAlchemy 内省），没有则返回 first column"""
+    from sqlalchemy import inspect as sa_inspect
+    from ..models import engine
+    insp = sa_inspect(engine)
+    pk_constraint = insp.get_pk_constraint(table_name)
+    pks = pk_constraint.get("constrained_columns", []) if pk_constraint else []
+    if pks:
+        return pks[0]
+    # fallback：返回第一列
+    cols = insp.get_columns(table_name)
+    return cols[0]["name"] if cols else "id"
 
 
 def _validate_table(db, table_name: str):
-    """校验表名是否在数据库中（防止 SQL 注入）"""
-    from sqlalchemy import text
-    existing = db.execute(
-        text("SELECT name FROM sqlite_master WHERE type='table' AND name=:name"),
-        {"name": table_name}
-    ).fetchone()
-    if not existing:
+    """校验表名是否在数据库中（通过 SQLAlchemy MetaData，防止 SQL 注入）"""
+    from sqlalchemy import inspect as sa_inspect
+    from ..models import engine
+    insp = sa_inspect(engine)
+    if table_name not in insp.get_table_names():
         raise HTTPException(404, detail={"error": {"code": "TABLE_NOT_FOUND", "message": f"表不存在: {table_name}"}})
 
 
 @router.get("/db/tables")
 def get_db_tables(admin_id: str = Depends(get_current_admin)):
-    """获取所有表的结构信息（增强版：含列定义 + 行数）"""
-    db = next(get_db())
-    from sqlalchemy import text
-    tables = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")).fetchall()
+    """获取所有表的结构信息（含列定义 + 行数）"""
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+    from ..models import engine
+    insp = sa_inspect(engine)
+    table_names = sorted(insp.get_table_names())
     table_info = []
-    for t in tables:
-        name = t[0]
-        count = db.execute(text(f"SELECT COUNT(*) FROM [{name}]")).scalar()
-        cols = _get_table_columns(db, name)
-        table_info.append({"name": name, "rows": count, "columns": cols})
+    with engine.connect() as conn:
+        for name in table_names:
+            count = conn.execute(sa_text(f"SELECT COUNT(*) FROM `{name}`")).scalar()
+            cols = _columns_to_info(insp, name)
+            table_info.append({"name": name, "rows": count, "columns": cols})
+    db_url = engine.url
     return {
-        "database_file": os.path.join(DATA_DIR, "literature.db"),
+        "database_file": f"{db_url.host}:{db_url.port}/{db_url.database}",
         "size_bytes": _get_db_size(),
         "size_mb": f"{_get_db_size() / 1024 / 1024:.2f} MB",
         "tables": table_info,
@@ -529,12 +616,12 @@ def get_table_rows(
     pk = _get_primary_key(db, table_name)
 
     # 查询总数
-    total = db.execute(text(f"SELECT COUNT(*) FROM [{table_name}]")).scalar()
+    total = db.execute(text(f"SELECT COUNT(*) FROM `{table_name}`")).scalar()
 
     # 分页查询
     offset = (page - 1) * size
     rows = db.execute(
-        text(f"SELECT * FROM [{table_name}] ORDER BY [{pk}] DESC LIMIT :limit OFFSET :offset"),
+        text(f"SELECT * FROM `{table_name}` ORDER BY `{pk}` DESC LIMIT :limit OFFSET :offset"),
         {"limit": size, "offset": offset}
     ).fetchall()
 
@@ -583,9 +670,9 @@ def insert_table_row(
         raise HTTPException(400, detail={"error": {"code": "NO_VALID_COLUMNS", "message": "没有有效的列数据"}})
 
     # 参数化 SQL
-    cols_sql = ", ".join(f"[{k}]" for k in insert_data.keys())
+    cols_sql = ", ".join(f"`{k}`" for k in insert_data.keys())
     vals_sql = ", ".join(f":{k}" for k in insert_data.keys())
-    sql = f"INSERT INTO [{table_name}] ({cols_sql}) VALUES ({vals_sql})"
+    sql = f"INSERT INTO `{table_name}` ({cols_sql}) VALUES ({vals_sql})"
     db.execute(text(sql), insert_data)
     db.commit()
 
@@ -615,9 +702,9 @@ def update_table_row(
         raise HTTPException(400, detail={"error": {"code": "NO_VALID_COLUMNS", "message": "没有有效的列数据"}})
 
     # 构建 SET 子句
-    set_sql = ", ".join(f"[{k}] = :{k}" for k in update_data.keys())
+    set_sql = ", ".join(f"`{k}` = :{k}" for k in update_data.keys())
     update_data["_pk_val"] = row_id
-    sql = f"UPDATE [{table_name}] SET {set_sql} WHERE [{pk}] = :_pk_val"
+    sql = f"UPDATE `{table_name}` SET {set_sql} WHERE `{pk}` = :_pk_val"
     result = db.execute(text(sql), update_data)
     db.commit()
 
@@ -640,7 +727,7 @@ def delete_table_row(
     _validate_table(db, table_name)
     pk = _get_primary_key(db, table_name)
 
-    sql = f"DELETE FROM [{table_name}] WHERE [{pk}] = :pk_val"
+    sql = f"DELETE FROM `{table_name}` WHERE `{pk}` = :pk_val"
     result = db.execute(text(sql), {"pk_val": row_id})
     db.commit()
 

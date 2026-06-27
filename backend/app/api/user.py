@@ -94,7 +94,8 @@ def get_user_config(user_id: str = Depends(get_current_user)):
     db = next(get_db())
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(404, detail={"error": {"code": "USER_NOT_FOUND", "message": "用户不存在"}})
+        # 用户行不存在（如换库后旧 session 失效）时返回空配置，而非 404
+        return {"api_key": "", "api_key_configured": False, "model": "deepseek-chat"}
 
     plain_key = _decrypt(user.api_key_encrypted) if user.api_key_encrypted else ""
     return {
@@ -110,7 +111,9 @@ def update_user_config(body: UpdateConfigRequest, user_id: str = Depends(get_cur
     db = next(get_db())
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(404, detail={"error": {"code": "USER_NOT_FOUND", "message": "用户不存在"}})
+        # 用户行不存在（如换库后旧 session 失效）时自动补建匿名用户，避免保存失败
+        user = User(id=user_id, is_anonymous=True)
+        db.add(user)
 
     if body.api_key is not None:
         user.api_key_encrypted = _encrypt(body.api_key)
@@ -131,7 +134,8 @@ def update_user_config(body: UpdateConfigRequest, user_id: str = Depends(get_cur
 def test_api_connection(body: TestConfigRequest, user_id: str = Depends(get_current_user)):
     """测试 API Key 连接"""
     from ai.llm_client import LLMClient
-    client = LLMClient(api_key=body.api_key, provider="deepseek")
+    provider = "qwen" if body.model == "qwen-turbo" else "deepseek"
+    client = LLMClient(api_key=body.api_key, provider=provider)
     result = client.test_connection()
 
     if result["success"]:

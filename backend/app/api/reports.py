@@ -35,11 +35,14 @@ def generate_report_endpoint(paper_id: str, body: GenerateReportRequest, user_id
     if not api_key:
         raise HTTPException(400, detail={"error": {"code": "NO_API_KEY", "message": "请先在设置页配置 API Key"}})
 
+    model_preference = user.model_preference if user else "deepseek-chat"
+    provider = "qwen" if model_preference == "qwen-turbo" else "deepseek"
+
     # 调 B 的报告生成函数
     from ai.llm_client import LLMClient
     from ai.report_generator import generate_report
 
-    llm_client = LLMClient(api_key=api_key)
+    llm_client = LLMClient(api_key=api_key, provider=provider)
     result = generate_report(paper_id, body.report_type, llm_client)
 
     if not result.get("success"):

@@ -1,8 +1,28 @@
 import os
 
-# 数据库路径（相对于 backend 目录）
+import json
+
+# 项目根目录（backend/）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'data', 'literature.db')}"
+
+# 数据库连接：从 backend/db_config.json 读取
+# 模板文件为 db_config.example.json，复制后填入自己的数据库密码即可
+# 使用前请先创建数据库：CREATE DATABASE literature_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+def _load_db_url():
+    config_path = os.path.join(BASE_DIR, "db_config.json")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"数据库配置文件不存在：{config_path}\n"
+            f"请复制 db_config.example.json 为 db_config.json 并填入你的数据库连接信息"
+        )
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    url = config.get("DATABASE_URL", "")
+    if not url:
+        raise ValueError("db_config.json 中缺少 DATABASE_URL 配置项")
+    return url
+
+DATABASE_URL = _load_db_url()
 
 # 文件存储路径
 DATA_DIR = os.path.join(BASE_DIR, "data")
