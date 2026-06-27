@@ -1,6 +1,9 @@
 """知识库构建模块"""
 import os
 import logging
+
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -24,7 +27,32 @@ class KnowledgeBase:
     def get_model(cls):
         """获取嵌入模型（单例）"""
         if cls._model is None:
-            cls._model = SentenceTransformer(MODEL_CONFIG["embedding_model"])
+            model_name = MODEL_CONFIG["embedding_model"]
+            logging.info(f"KnowledgeBase: 正在加载嵌入模型 {model_name}")
+            logging.info(f"KnowledgeBase: HF_ENDPOINT = {os.environ.get('HF_ENDPOINT', '未设置')}")
+            
+            local_model_path = os.environ.get("MODEL_LOCAL_PATH", "")
+            if local_model_path and os.path.exists(local_model_path):
+                logging.info(f"KnowledgeBase: 从本地路径加载模型: {local_model_path}")
+                cls._model = SentenceTransformer(local_model_path)
+            else:
+                try:
+                    cls._model = SentenceTransformer(model_name)
+                except Exception as e:
+                    logging.warning(f"KnowledgeBase: 在线加载失败，尝试本地缓存: {str(e)}")
+                    try:
+                        cls._model = SentenceTransformer(model_name, local_files_only=True)
+                    except Exception as e2:
+                        raise RuntimeError(
+                            f"嵌入模型加载失败：\n"
+                            f"  在线加载失败: {str(e)}\n"
+                            f"  本地缓存加载失败: {str(e2)}\n"
+                            f"建议：\n"
+                            f"  1. 检查网络连接或设置 HF_ENDPOINT 环境变量\n"
+                            f"  2. 或设置 MODEL_LOCAL_PATH 指向本地模型目录"
+                        )
+            
+            logging.info("KnowledgeBase: 嵌入模型加载成功")
         return cls._model
 
 
