@@ -78,7 +78,13 @@ class LLMClient:
     
     def _call_qwen(self, prompt: str, system_prompt: str = "") -> Dict[str, Any]:
         """调用 Qwen API"""
-        url = "https://dashscope.aliyuncs.com/api/text/chat"
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # 更新为正确的API端点
+        url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        
+        logger.info(f"[LLM] 调用Qwen API，URL: {url}")
         
         messages = []
         if system_prompt:
@@ -92,28 +98,44 @@ class LLMClient:
         
         data = {
             "model": "qwen-turbo",
-            "input": {
-                "messages": messages
-            },
-            "parameters": {
-                "max_tokens": self.max_tokens,
-                "temperature": self.temperature
-            }
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature
         }
         
-        response = requests.post(url, headers=headers, json=data, timeout=self.timeout)
-        response.raise_for_status()
-        
-        result = response.json()
-        
-        if result.get("output") and result["output"].get("text"):
-            return {
-                "success": True,
-                "content": result["output"]["text"],
-                "usage": result.get("usage", {})
-            }
-        else:
-            return {"success": False, "error": "API 返回格式异常"}
+        try:
+            logger.info(f"[LLM] 发送请求到Qwen...")
+            response = requests.post(url, headers=headers, json=data, timeout=self.timeout)
+            
+            logger.info(f"[LLM] Qwen响应状态码: {response.status_code}")
+            
+            if response.status_code != 200:
+                error_detail = response.text
+                logger.error(f"[LLM] Qwen API错误: {response.status_code} - {error_detail}")
+                return {"success": False, "error": f"API错误 {response.status_code}: {error_detail}"}
+            
+            result = response.json()
+            logger.info(f"[LLM] Qwen响应格式正常")
+            
+            if result.get("choices") and len(result["choices"]) > 0:
+                return {
+                    "success": True,
+                    "content": result["choices"][0]["message"]["content"],
+                    "usage": result.get("usage", {})
+                }
+            else:
+                logger.error(f"[LLM] Qwen返回格式异常: {result}")
+                return {"success": False, "error": f"API返回格式异常: {result}"}
+                
+        except requests.exceptions.Timeout:
+            logger.error("[LLM] Qwen请求超时")
+            return {"success": False, "error": "Qwen API请求超时，请检查网络连接或稍后重试"}
+        except requests.exceptions.ConnectionError:
+            logger.error("[LLM] Qwen连接失败")
+            return {"success": False, "error": "无法连接到Qwen API，请检查网络连接"}
+        except Exception as e:
+            logger.exception(f"[LLM] Qwen调用异常: {str(e)}")
+            return {"success": False, "error": f"Qwen调用失败: {str(e)}"}
     
     def test_connection(self) -> Dict[str, Any]:
         """测试 API 连接"""
