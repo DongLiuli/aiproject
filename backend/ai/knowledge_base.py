@@ -1,6 +1,7 @@
 """知识库构建模块"""
 import os
 import logging
+import time
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
@@ -27,21 +28,32 @@ class KnowledgeBase:
     def get_model(cls):
         """获取嵌入模型（单例）"""
         if cls._model is None:
+            start_time = time.time()
             model_name = MODEL_CONFIG["embedding_model"]
-            logging.info(f"KnowledgeBase: 正在加载嵌入模型 {model_name}")
-            logging.info(f"KnowledgeBase: HF_ENDPOINT = {os.environ.get('HF_ENDPOINT', '未设置')}")
+            logging.info(f"[知识库] 开始加载嵌入模型: {model_name} (第一次加载较慢)")
+            logging.info(f"[知识库] HF_ENDPOINT = {os.environ.get('HF_ENDPOINT', '未设置')}")
             
             local_model_path = os.environ.get("MODEL_LOCAL_PATH", "")
             if local_model_path and os.path.exists(local_model_path):
-                logging.info(f"KnowledgeBase: 从本地路径加载模型: {local_model_path}")
+                logging.info(f"[知识库] 从本地路径加载模型: {local_model_path}")
+                load_start = time.time()
                 cls._model = SentenceTransformer(local_model_path)
+                load_time = time.time() - load_start
+                logging.info(f"[知识库] 本地模型加载完成，耗时 {load_time:.2f}s")
             else:
                 try:
+                    logging.info(f"[知识库] 开始在线加载模型...")
+                    load_start = time.time()
                     cls._model = SentenceTransformer(model_name)
+                    load_time = time.time() - load_start
+                    logging.info(f"[知识库] 在线加载完成，耗时 {load_time:.2f}s")
                 except Exception as e:
-                    logging.warning(f"KnowledgeBase: 在线加载失败，尝试本地缓存: {str(e)}")
+                    logging.warning(f"[知识库] 在线加载失败，尝试本地缓存: {str(e)}")
                     try:
+                        load_start = time.time()
                         cls._model = SentenceTransformer(model_name, local_files_only=True)
+                        load_time = time.time() - load_start
+                        logging.info(f"[知识库] 本地缓存加载完成，耗时 {load_time:.2f}s")
                     except Exception as e2:
                         raise RuntimeError(
                             f"嵌入模型加载失败：\n"
@@ -52,7 +64,8 @@ class KnowledgeBase:
                             f"  2. 或设置 MODEL_LOCAL_PATH 指向本地模型目录"
                         )
             
-            logging.info("KnowledgeBase: 嵌入模型加载成功")
+            total_time = time.time() - start_time
+            logging.info(f"[知识库] 嵌入模型加载成功！总耗时 {total_time:.2f}s")
         return cls._model
 
 
@@ -65,11 +78,17 @@ def build_knowledge_base(paper_id: str, sections: List[Dict[str, Any]]) -> Dict[
     :return: 构建结果
     """
     try:
-        logging.info(f"build_knowledge_base: 开始构建知识库 - {paper_id}")
+        start_time = time.time()
+        logging.info(f"[知识库] 开始构建知识库 - {paper_id}")
 
+        # 步骤 1: 获取模型
+        step_start = time.time()
         model = KnowledgeBase.get_model()
+        step_time = time.time() - step_start
+        logging.info(f"[知识库] 步骤1/5: 获取模型完成，耗时 {step_time:.2f}s")
 
-        # 收集所有分块
+        # 步骤 2: 收集所有分块
+        step_start = time.time()
         all_chunks = []
         for section in sections:
             chunks = chunk_text(
@@ -78,33 +97,37 @@ def build_knowledge_base(paper_id: str, sections: List[Dict[str, Any]]) -> Dict[
                 section["page_start"]
             )
             all_chunks.extend(chunks)
-
-        logging.info(f"build_knowledge_base: 共提取 {len(all_chunks)} 个分块 - {paper_id}")
+        step_time = time.time() - step_start
+        logging.info(f"[知识库] 步骤2/5: 共提取 {len(all_chunks)} 个分块，耗时 {step_time:.2f}s")
 
         if not all_chunks:
-            logging.warning(f"build_knowledge_base: 未提取到有效分块 - {paper_id}")
+            logging.warning(f"[知识库] 未提取到有效分块 - {paper_id}")
             return {"success": False, "error": "无法从论文中提取有效内容"}
 
-        # 向量化
+        # 步骤 3: 向量化
+        step_start = time.time()
         contents = [chunk["content"] for chunk in all_chunks]
+        logging.info(f"[知识库] 步骤3/5: 开始向量化 {len(contents)} 个分块...")
         embeddings = model.encode(contents)
         embeddings = np.array(embeddings).astype(np.float32)
+        step_time = time.time() - step_start
+        logging.info(f"[知识库] 步骤3/5: 向量化完成，维度 {embeddings.shape}，耗时 {step_time:.2f}s")
 
-        logging.info(f"build_knowledge_base: 向量化完成，维度 {embeddings.shape} - {paper_id}")
-
-        # 创建 FAISS 索引
+        # 步骤 4: 创建 FAISS 索引
+        step_start = time.time()
         dimension = MODEL_CONFIG["embedding_dim"]
         index = faiss.IndexFlatL2(dimension)
         index.add(embeddings)
+        step_time = time.time() - step_start
+        logging.info(f"[知识库] 步骤4/5: FAISS 索引创建完成，耗时 {step_time:.2f}s")
 
-        logging.info(f"build_knowledge_base: FAISS 索引创建完成 - {paper_id}")
-
-        # 保存索引文件
+        # 步骤 5: 保存索引文件
+        step_start = time.time()
         os.makedirs(VECTOR_DIR, exist_ok=True)
         index_path = os.path.join(VECTOR_DIR, f"{paper_id}.index")
         faiss.write_index(index, index_path)
-
-        logging.info(f"build_knowledge_base: 索引文件已保存 - {index_path}")
+        step_time = time.time() - step_start
+        logging.info(f"[知识库] 步骤5/5: 索引文件已保存 - {index_path}，耗时 {step_time:.2f}s")
 
         # 返回分块数据（供 A 写入数据库，不包含 faiss_index 和 embedding，因为模型没有这些字段）
         chunks_for_db = []
@@ -117,6 +140,9 @@ def build_knowledge_base(paper_id: str, sections: List[Dict[str, Any]]) -> Dict[
                 "content": chunk["content"]
             })
 
+        total_time = time.time() - start_time
+        logging.info(f"[知识库] 知识库构建全部完成！总耗时 {total_time:.2f}s，共 {len(all_chunks)} 个分块")
+
         return {
             "success": True,
             "message": f"知识库构建完成，共 {len(all_chunks)} 个分块",
@@ -125,7 +151,8 @@ def build_knowledge_base(paper_id: str, sections: List[Dict[str, Any]]) -> Dict[
         }
 
     except Exception as e:
-        logging.error(f"build_knowledge_base error: {str(e)} - {paper_id}")
+        total_time = time.time() - start_time if 'start_time' in locals() else 0
+        logging.error(f"[知识库] 构建失败: {str(e)} - {paper_id}，已耗时 {total_time:.2f}s")
         return {"success": False, "error": f"构建知识库失败: {str(e)}"}
 
 
