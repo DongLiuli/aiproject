@@ -224,3 +224,4 @@ backend/data/*.db
 
 # 数据库配置（每人本地创建，勿提交）
 backend/db_config.json
+doc/plantuml/
