@@ -39,7 +39,7 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
                     chunks_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     生成论文研读报告
-    
+
     :param paper_id: 论文 ID
     :param report_type: 报告类型（quick/method/experiment）
     :param llm_client: LLM 客户端
@@ -49,25 +49,30 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
     """
     if not llm_client:
         return {"success": False, "error": "LLM 客户端未提供"}
-    
+
     if report_type not in ["quick", "method", "experiment"]:
         return {"success": False, "error": "无效的报告类型"}
-    
+
     try:
         # 如果未传入分块数据，从数据库查询
         if chunks_data is None:
             try:
-                from app.models import get_db, Chunk
+                from app.models import get_db, Chunk, PaperStructuredInfo
                 db = next(get_db())
                 chunks_data = db.query(Chunk).filter(Chunk.paper_id == paper_id).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+                # 同时获取 paper_text 用于语言检测
+                if not paper_text:
+                    info = db.query(PaperStructuredInfo).filter(PaperStructuredInfo.paper_id == paper_id).first()
+                    if info:
+                        paper_text = info.full_text or ""
             except ImportError:
                 return {"success": False, "error": "无法连接数据库"}
-        
+
         if not chunks_data:
             return {"success": False, "error": "论文尚未解析或无分块数据"}
-        
+
         lang = detect_language(paper_text)
-        
+
         if report_type == "quick":
             queries = QUERY_TERMS["quick"]["zh"] + QUERY_TERMS["quick"]["en"] if lang == "zh" else QUERY_TERMS["quick"]["en"]
             report_title = "速读报告"
@@ -77,11 +82,11 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
         else:
             queries = QUERY_TERMS["experiment"]["zh"] + QUERY_TERMS["experiment"]["en"] if lang == "zh" else QUERY_TERMS["experiment"]["en"]
             report_title = "实验总结报告"
-        
+
         # 检索相关内容
         all_chunks = []
         seen_content = set()
-        
+
         for query in queries:
             chunks = search_chunks(paper_id, query, k=SEARCH_CONFIG["top_k"], chunks_data=chunks_data)
             for chunk in chunks:
@@ -89,22 +94,22 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
                 if chunk["content"] not in seen_content:
                     seen_content.add(chunk["content"])
                     all_chunks.append(chunk)
-        
+
         if not all_chunks:
             return {"success": False, "error": "未找到相关内容"}
-        
+
         # 构建上下文
         context = "\n\n".join([f"【第{c['page']}页 - {c['section_title']}】\n{c['content']}" for c in all_chunks])
-        
+
         # 构建 Prompt
         prompt = _build_report_prompt(context, report_type, report_title)
-        
+
         # 调用 LLM
         result = llm_client.call(prompt)
-        
+
         if not result["success"]:
             return {"success": False, "error": result["error"]}
-        
+
         return {
             "success": True,
             "report_id": f"rpt_{paper_id}_{report_type}",
@@ -112,7 +117,7 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
             "content": result["content"],
             "format": "markdown"
         }
-    
+
     except Exception as e:
         return {"success": False, "error": f"生成报告失败: {str(e)}"}
 
