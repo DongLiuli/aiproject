@@ -1,6 +1,25 @@
+<template>
+  <div class="paper-content">
+    <div v-if="loading" class="loading">
+      <div class="spinner"></div>
+      <p>正在加载论文...</p>
+    </div>
+    <div v-else-if="pdfUrl" class="pdf-viewer">
+      <iframe :src="pdfUrl" title="论文PDF" class="pdf-frame"></iframe>
+    </div>
+    <div v-else-if="error === 'pdf_not_found'" class="empty">
+      <p>PDF 文件暂不可用</p>
+      <p class="hint">可能是页面刷新后缓存丢失，请重新上传论文</p>
+    </div>
+    <div v-else class="empty">
+      <p>{{ error || '请先上传论文' }}</p>
+    </div>
+  </div>
+</template>
+
 <script setup>
-import { ref, computed } from 'vue'
-import { BookOpen, ChevronDown, ChevronRight, Copy, FileText } from 'lucide-vue-next'
+import { ref, onMounted, watch } from 'vue'
+import { getPDFUrl } from '@/utils/pdfStorage'
 
 const props = defineProps({
   paper: {
@@ -9,206 +28,113 @@ const props = defineProps({
   },
 })
 
-const expandedSections = ref(new Set())
+const pdfUrl = ref('')
+const loading = ref(true)
+const error = ref(null)
 
-const paperSections = computed(() => {
-  const items = []
-
-  if (props.paper.sections && Array.isArray(props.paper.sections)) {
-    props.paper.sections.forEach((section, index) => {
-      if (section.title || section.content) {
-        items.push({
-          id: `section-${index}`,
-          title: section.title || `章节 ${index + 1}`,
-          content: section.content || '',
-        })
-      }
-    })
+async function loadPDF() {
+  if (!props.paper.paper_id) {
+    loading.value = false
+    error.value = '暂无论文'
+    return
   }
 
-  if (props.paper.full_text && items.length === 0) {
-    items.push({
-      id: 'full-text',
-      title: '全文',
-      content: props.paper.full_text,
-    })
-  }
+  loading.value = true
+  error.value = null
+  pdfUrl.value = ''
 
-  return items
+  try {
+    const url = await getPDFUrl(props.paper.paper_id)
+
+    if (url) {
+      pdfUrl.value = url
+    } else {
+      error.value = 'pdf_not_found'
+    }
+  } catch (err) {
+    console.error('加载 PDF 失败:', err)
+    error.value = '加载失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadPDF()
 })
 
-function toggleSection(id) {
-  if (expandedSections.value.has(id)) {
-    expandedSections.value.delete(id)
-  } else {
-    expandedSections.value.add(id)
-  }
-  expandedSections.value = new Set(expandedSections.value)
-}
-
-async function copyContent(content) {
-  try {
-    await navigator.clipboard.writeText(content)
-  } catch (err) {
-    console.error('Copy failed:', err)
-  }
-}
+watch(
+  () => props.paper.paper_id,
+  () => {
+    if (pdfUrl.value) {
+      URL.revokeObjectURL(pdfUrl.value)
+    }
+    loadPDF()
+  },
+)
 </script>
 
-<template>
-  <div class="content-container">
-    <div class="content-header">
-      <BookOpen class="content-icon" />
-      <h3>论文内容</h3>
-    </div>
-
-    <div class="content-sections">
-      <div v-if="paperSections.length === 0" class="empty-state">
-        <FileText class="empty-icon" />
-        <p>暂无论文内容</p>
-      </div>
-
-      <div v-for="section in paperSections" :key="section.id" class="section-item">
-        <div class="section-header" @click="toggleSection(section.id)">
-          <button class="expand-btn">
-            <ChevronDown v-if="expandedSections.has(section.id)" class="expand-icon" />
-            <ChevronRight v-else class="expand-icon" />
-          </button>
-          <h4 class="section-title">{{ section.title }}</h4>
-          <button class="copy-btn" @click.stop="copyContent(section.content)" title="复制内容">
-            <Copy class="copy-icon" />
-          </button>
-        </div>
-
-        <div v-if="expandedSections.has(section.id)" class="section-content">
-          <p>{{ section.content }}</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</template>
-
 <style scoped>
-.content-container {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+.paper-content {
+  width: 100%;
+  min-height: 800px;
+  background: #f8f9fa;
+  border-radius: 8px;
 }
 
-.content-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.content-icon {
-  width: 20px;
-  height: 20px;
-  color: #667eea;
-}
-
-.content-header h3 {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #333;
-}
-
-.content-sections {
-  padding: 8px;
-}
-
-.empty-state {
+.loading {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px;
+  height: 800px;
   color: #999;
 }
 
-.empty-icon {
-  width: 48px;
-  height: 48px;
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
   margin-bottom: 16px;
 }
 
-.empty-state p {
-  margin: 0;
-  font-size: 0.9375rem;
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
-.section-item {
-  margin-bottom: 4px;
+.pdf-viewer {
+  width: 100%;
+  height: 800px;
+  overflow: auto;
 }
 
-.section-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  cursor: pointer;
-  border-radius: 8px;
-  transition: background 0.2s;
-}
-
-.section-header:hover {
-  background: #fafafa;
-}
-
-.expand-btn {
-  background: none;
+.pdf-frame {
+  width: 100%;
+  height: 100%;
   border: none;
-  cursor: pointer;
-  padding: 4px;
+  background: white;
 }
 
-.expand-icon {
-  width: 16px;
-  height: 16px;
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 800px;
   color: #999;
 }
 
-.section-title {
-  flex: 1;
-  font-size: 0.9375rem;
-  font-weight: 500;
-  color: #333;
-  margin: 0;
-}
-
-.copy-btn {
-  width: 28px;
-  height: 28px;
-  background: #f0f0f0;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-}
-
-.copy-btn:hover {
-  background: #e0e0e0;
-}
-
-.copy-icon {
-  width: 14px;
-  height: 14px;
-  color: #666;
-}
-
-.section-content {
-  padding: 0 16px 16px 48px;
-}
-
-.section-content p {
-  margin: 0;
-  font-size: 0.9375rem;
-  line-height: 1.8;
-  color: #444;
+.hint {
+  font-size: 0.85rem;
+  color: #aaa;
+  margin-top: 8px;
 }
 </style>

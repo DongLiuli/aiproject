@@ -93,12 +93,7 @@ const formatSize = (bytes) => {
 
     <div class="card-footer">
       <div class="card-actions">
-        <button
-          class="action-btn"
-          v-if="paper.parse_status !== 'parsing'"
-          @click.stop="emit('reparse', paper.paper_id)"
-          title="重新解析"
-        >
+        <button class="action-btn" @click.stop="emit('reparse', paper.paper_id)" title="重新解析">
           <RefreshCw class="action-icon" />
         </button>
         <button class="action-btn delete" @click.stop="emit('delete', paper.paper_id)" title="删除">

@@ -29,8 +29,8 @@ watch(
 async function saveConfig() {
   saving.value = true
   try {
-    await userStore.updateConfig(config.value)
-    testResult.value = { success: true, message: '配置保存成功' }
+    const result = await userStore.updateConfig(config.value)
+    testResult.value = { success: result.success, message: result.message }
   } catch (_err) {
     testResult.value = { success: false, message: '保存失败，请重试' }
   } finally {

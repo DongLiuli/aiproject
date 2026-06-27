@@ -1,17 +1,9 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useReportsStore } from '@/stores/papers'
-import {
-  FileText,
-  BookOpen,
-  BarChart3,
-  Loader2,
-  Download,
-  RefreshCw,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-} from 'lucide-vue-next'
+import { marked } from 'marked'
+import { FileText, BookOpen, BarChart3, Loader2, Download, Copy, Check } from 'lucide-vue-next'
+
 const props = defineProps({
   paperId: {
     type: String,
@@ -22,75 +14,133 @@ const props = defineProps({
     default: () => ({}),
   },
 })
+
 const reportsStore = useReportsStore()
 const activeTab = ref('structured')
 const generating = ref(false)
 const reportContent = ref('')
-const expandedSections = ref(new Set())
+const copied = ref(false)
+
 const reportTypes = [
   { id: 'structured', name: '结构化分析', icon: BookOpen },
-  { id: 'summary', name: '速读报告', icon: FileText },
-  { id: 'methods', name: '方法总结', icon: BookOpen },
-  { id: 'experiments', name: '实验总结', icon: BarChart3 },
+  { id: 'quick', name: '速读报告', icon: FileText },
+  { id: 'method', name: '方法总结', icon: BookOpen },
+  { id: 'experiment', name: '实验总结', icon: BarChart3 },
 ]
-const structuredSections = computed(() => {
-  const items = []
-  const info = props.paper.structured_info || {}
-  if (info.research_background) {
-    items.push({ id: 'research_background', title: '研究背景', content: info.research_background })
-  }
-  if (info.research_questions) {
-    items.push({ id: 'research_questions', title: '研究问题', content: info.research_questions })
-  }
-  if (info.method_flow) {
-    items.push({ id: 'method_flow', title: '方法流程', content: info.method_flow })
-  }
-  if (info.experiment_design) {
-    items.push({ id: 'experiment', title: '实验设计', content: info.experiment_design })
-  }
-  if (info.experiment_results) {
-    items.push({ id: 'results', title: '实验结果', content: info.experiment_results })
-  }
-  if (info.innovations) {
-    items.push({ id: 'innovations', title: '创新点', content: info.innovations })
-  }
-  return items
+
+const renderedContent = computed(() => {
+  if (!reportContent.value) return ''
+  return marked(reportContent.value)
 })
-function toggleSection(id) {
-  if (expandedSections.value.has(id)) {
-    expandedSections.value.delete(id)
-  } else {
-    expandedSections.value.add(id)
+
+const structuredMarkdown = computed(() => {
+  const info = props.paper.structured_info
+  if (!info) return ''
+
+  let parsedInfo = info
+  if (typeof info === 'string') {
+    try {
+      parsedInfo = JSON.parse(info)
+    } catch {
+      return ''
+    }
   }
-  expandedSections.value = new Set(expandedSections.value)
-}
-async function copyContent(content) {
+
+  let md = ''
+
+  if (parsedInfo.research_background) {
+    md += `## 研究背景\n\n${parsedInfo.research_background}\n\n`
+  }
+  if (parsedInfo.research_questions) {
+    md += `## 研究问题\n\n${parsedInfo.research_questions}\n\n`
+  }
+  if (parsedInfo.method_flow) {
+    md += `## 方法流程\n\n${parsedInfo.method_flow}\n\n`
+  }
+  if (parsedInfo.model_algorithm) {
+    md += `## 模型算法\n\n${parsedInfo.model_algorithm}\n\n`
+  }
+  if (parsedInfo.dataset_info) {
+    md += `## 数据集信息\n\n${parsedInfo.dataset_info}\n\n`
+  }
+  if (parsedInfo.experiment_results) {
+    md += `## 实验结果\n\n${parsedInfo.experiment_results}\n\n`
+  }
+  if (parsedInfo.innovations) {
+    md += `## 创新点\n\n`
+    const innovations = Array.isArray(parsedInfo.innovations)
+      ? parsedInfo.innovations
+      : [parsedInfo.innovations]
+    innovations.forEach((item) => {
+      md += `- ${item}\n`
+    })
+    md += '\n'
+  }
+  if (parsedInfo.limitations) {
+    md += `## 局限性\n\n`
+    const limitations = Array.isArray(parsedInfo.limitations)
+      ? parsedInfo.limitations
+      : [parsedInfo.limitations]
+    limitations.forEach((item) => {
+      md += `- ${item}\n`
+    })
+    md += '\n'
+  }
+  if (parsedInfo.future_work) {
+    md += `## 未来工作\n\n${parsedInfo.future_work}\n\n`
+  }
+
+  return md
+})
+
+const structuredRendered = computed(() => {
+  return marked(structuredMarkdown.value)
+})
+
+async function copyContent() {
+  if (!reportContent.value) return
   try {
-    await navigator.clipboard.writeText(content)
+    await navigator.clipboard.writeText(reportContent.value)
+    copied.value = true
+    setTimeout(() => {
+      copied.value = false
+    }, 2000)
   } catch (err) {
     console.error('Copy failed:', err)
   }
 }
+
 async function generateReport(type) {
   if (generating.value) return
+
+  if (!props.paper.structured_info) {
+    reportContent.value = '论文尚未完成解析，请先等待解析完成或点击"重新解析"按钮'
+    activeTab.value = type
+    return
+  }
+
   generating.value = true
   activeTab.value = type
+  reportContent.value = ''
   try {
     const content = await reportsStore.generateReport(props.paperId, type)
     reportContent.value = content
   } catch (err) {
-    reportContent.value = '报告生成失败，请重试'
+    const errorMsg = err.response?.data?.error?.message || '报告生成失败，请重试'
+    reportContent.value = errorMsg
   } finally {
     generating.value = false
   }
 }
+
 function downloadReport() {
   if (!reportContent.value) return
   const blob = new Blob([reportContent.value], { type: 'text/markdown' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `report-${props.paperId}-${activeTab.value}.md`
+  const reportName = reportTypes.find((t) => t.id === activeTab.value)?.name || '报告'
+  a.download = `${reportName}-${props.paperId.substring(0, 8)}.md`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -101,14 +151,22 @@ function downloadReport() {
     <div class="report-header">
       <FileText class="report-icon" />
       <h3>研读报告</h3>
-      <button
-        class="download-btn"
-        :disabled="!reportContent"
-        @click="downloadReport"
-        title="下载报告"
-      >
-        <Download class="download-icon" />
-      </button>
+      <div class="header-actions">
+        <button class="action-btn" :disabled="!reportContent" @click="copyContent" title="复制报告">
+          <Check v-if="copied" class="action-icon" />
+          <Copy v-else class="action-icon" />
+          <span>{{ copied ? '已复制' : '复制' }}</span>
+        </button>
+        <button
+          class="action-btn download"
+          :disabled="!reportContent"
+          @click="downloadReport"
+          title="下载报告"
+        >
+          <Download class="action-icon" />
+          <span>下载</span>
+        </button>
+      </div>
     </div>
 
     <div class="report-tabs">
@@ -126,26 +184,17 @@ function downloadReport() {
     </div>
 
     <div class="report-content">
-      <div v-if="activeTab === 'structured'" class="structured-content">
-        <div v-if="structuredSections.length === 0" class="content-empty">
+      <div v-if="generating" class="content-loading">
+        <Loader2 class="loading-icon" />
+        <span>正在生成报告...</span>
+      </div>
+
+      <div v-else-if="activeTab === 'structured'" class="structured-content">
+        <div v-if="!paper.structured_info" class="content-empty">
           <FileText class="empty-icon" />
           <p>暂无结构化分析数据</p>
         </div>
-        <div v-for="section in structuredSections" :key="section.id" class="section-item">
-          <div class="section-header" @click="toggleSection(section.id)">
-            <button class="expand-btn">
-              <ChevronDown v-if="expandedSections.has(section.id)" class="expand-icon" />
-              <ChevronRight v-else class="expand-icon" />
-            </button>
-            <h4 class="section-title">{{ section.title }}</h4>
-            <button class="copy-btn" @click.stop="copyContent(section.content)" title="复制内容">
-              <Copy class="copy-icon" />
-            </button>
-          </div>
-          <div v-if="expandedSections.has(section.id)" class="section-content">
-            <p>{{ section.content }}</p>
-          </div>
-        </div>
+        <div v-else class="markdown-preview" v-html="structuredRendered"></div>
       </div>
 
       <div v-else-if="!reportContent" class="content-empty">
@@ -153,13 +202,8 @@ function downloadReport() {
         <p>点击上方按钮生成报告</p>
       </div>
 
-      <div v-else-if="generating" class="content-loading">
-        <Loader2 class="loading-icon" />
-        <span>正在生成报告...</span>
-      </div>
-
       <div v-else class="content-body">
-        <pre class="report-text">{{ reportContent }}</pre>
+        <div class="markdown-preview" v-html="renderedContent"></div>
       </div>
     </div>
   </div>
@@ -196,32 +240,46 @@ function downloadReport() {
   color: #333;
 }
 
-.download-btn {
-  width: 36px;
-  height: 36px;
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
   background: #f5f5f5;
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
+  font-size: 0.8rem;
+  color: #666;
+  transition: all 0.2s;
 }
 
-.download-btn:hover:not(:disabled) {
+.action-btn:hover:not(:disabled) {
   background: #e0e0e0;
 }
 
-.download-btn:disabled {
+.action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.download-icon {
-  width: 18px;
-  height: 18px;
-  color: #666;
+.action-btn.download {
+  background: #667eea;
+  color: white;
+}
+
+.action-btn.download:hover:not(:disabled) {
+  background: #5a6fd6;
+}
+
+.action-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .report-tabs {
@@ -229,13 +287,14 @@ function downloadReport() {
   gap: 8px;
   padding: 12px 16px;
   background: #fafafa;
+  flex-wrap: wrap;
 }
 
 .tab-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
+  padding: 10px 20px;
   background: white;
   border: 1px solid #e0e0e0;
   border-radius: 8px;
@@ -320,12 +379,128 @@ function downloadReport() {
   border-radius: 10px;
 }
 
-.report-text {
-  margin: 0;
-  font-size: 0.875rem;
+.markdown-preview {
+  font-size: 0.9rem;
   line-height: 1.8;
   color: #333;
-  white-space: pre-wrap;
-  word-break: break-word;
+}
+
+.markdown-preview h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0 0 16px 0;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #667eea;
+}
+
+.markdown-preview h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #333;
+  margin: 24px 0 12px 0;
+  padding-left: 10px;
+  border-left: 4px solid #667eea;
+}
+
+.markdown-preview h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #444;
+  margin: 20px 0 10px 0;
+}
+
+.markdown-preview p {
+  margin: 10px 0;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin: 10px 0;
+  padding-left: 24px;
+}
+
+.markdown-preview li {
+  margin: 6px 0;
+}
+
+.markdown-preview strong {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.markdown-preview em {
+  font-style: italic;
+}
+
+.markdown-preview code {
+  background: #e8f4fd;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.markdown-preview pre {
+  background: #1a1a2e;
+  color: #e4e4e7;
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.markdown-preview pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 0.85rem;
+}
+
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+  font-size: 0.85rem;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  padding: 10px 12px;
+  border: 1px solid #e0e0e0;
+  text-align: left;
+}
+
+.markdown-preview th {
+  background: #f5f5f5;
+  font-weight: 600;
+  color: #333;
+}
+
+.markdown-preview tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.markdown-preview a {
+  color: #667eea;
+  text-decoration: none;
+}
+
+.markdown-preview a:hover {
+  text-decoration: underline;
+}
+
+.markdown-preview blockquote {
+  border-left: 4px solid #667eea;
+  padding: 10px 16px;
+  margin: 12px 0;
+  background: #f5f7ff;
+  color: #555;
+}
+
+.markdown-preview hr {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 24px 0;
 }
 </style>

@@ -5,11 +5,14 @@ import UploadModal from '@/components/UploadModal.vue'
 import SettingsModal from '@/components/SettingsModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
+import { useUserStore } from '@/stores/user'
 
 const authStore = useAuthStore()
 const uiStore = useUIStore()
+const userStore = useUserStore()
 
 onMounted(async () => {
+  userStore.loadLocalConfig()
   await authStore.initialize()
 })
 </script>
