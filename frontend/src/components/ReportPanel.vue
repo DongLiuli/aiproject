@@ -1,8 +1,17 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useReportsStore } from '@/stores/papers'
 import { marked } from 'marked'
-import { FileText, BookOpen, BarChart3, Loader2, Download, Copy, Check } from 'lucide-vue-next'
+import {
+  FileText,
+  BookOpen,
+  BarChart3,
+  Loader2,
+  Download,
+  Copy,
+  Check,
+  RefreshCw,
+} from 'lucide-vue-next'
 
 const props = defineProps({
   paperId: {
@@ -97,10 +106,20 @@ const structuredRendered = computed(() => {
   return marked(structuredMarkdown.value)
 })
 
-async function copyContent() {
-  if (!reportContent.value) return
+const currentReportContent = computed(() => {
+  if (activeTab.value === 'structured') return ''
+  return reportsStore.getReport(props.paperId, activeTab.value) || ''
+})
+
+const currentRendered = computed(() => {
+  if (!currentReportContent.value) return ''
+  return marked(currentReportContent.value)
+})
+
+async function copyContent(content) {
+  if (!content) return
   try {
-    await navigator.clipboard.writeText(reportContent.value)
+    await navigator.clipboard.writeText(content)
     copied.value = true
     setTimeout(() => {
       copied.value = false
@@ -115,13 +134,11 @@ async function generateReport(type) {
 
   if (!props.paper.structured_info) {
     reportContent.value = '论文尚未完成解析，请先等待解析完成或点击"重新解析"按钮'
-    activeTab.value = type
     return
   }
 
   generating.value = true
   activeTab.value = type
-  reportContent.value = ''
   try {
     const content = await reportsStore.generateReport(props.paperId, type)
     reportContent.value = content
@@ -133,9 +150,18 @@ async function generateReport(type) {
   }
 }
 
+function switchTab(type) {
+  activeTab.value = type
+  if (type !== 'structured') {
+    reportContent.value = currentReportContent.value
+  }
+}
+
 function downloadReport() {
-  if (!reportContent.value) return
-  const blob = new Blob([reportContent.value], { type: 'text/markdown' })
+  const content =
+    activeTab.value === 'structured' ? structuredMarkdown.value : currentReportContent.value
+  if (!content) return
+  const blob = new Blob([content], { type: 'text/markdown' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -144,6 +170,22 @@ function downloadReport() {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+async function loadSavedReports() {
+  if (!props.paperId) return
+  try {
+    await reportsStore.getReports(props.paperId)
+    if (activeTab.value !== 'structured') {
+      reportContent.value = currentReportContent.value
+    }
+  } catch (err) {
+    console.error('Failed to load saved reports:', err)
+  }
+}
+
+onMounted(() => {
+  loadSavedReports()
+})
 </script>
 
 <template>
@@ -152,14 +194,21 @@ function downloadReport() {
       <FileText class="report-icon" />
       <h3>研读报告</h3>
       <div class="header-actions">
-        <button class="action-btn" :disabled="!reportContent" @click="copyContent" title="复制报告">
+        <button
+          class="action-btn"
+          :disabled="!currentReportContent && !structuredMarkdown"
+          @click="
+            copyContent(activeTab === 'structured' ? structuredMarkdown : currentReportContent)
+          "
+          title="复制报告"
+        >
           <Check v-if="copied" class="action-icon" />
           <Copy v-else class="action-icon" />
           <span>{{ copied ? '已复制' : '复制' }}</span>
         </button>
         <button
           class="action-btn download"
-          :disabled="!reportContent"
+          :disabled="!currentReportContent && !structuredMarkdown"
           @click="downloadReport"
           title="下载报告"
         >
@@ -175,7 +224,7 @@ function downloadReport() {
         :key="tab.id"
         class="tab-btn"
         :class="{ 'tab-active': activeTab === tab.id }"
-        @click="tab.id === 'structured' ? (activeTab = tab.id) : generateReport(tab.id)"
+        @click="switchTab(tab.id)"
       >
         <component :is="tab.icon" class="tab-icon" />
         <span>{{ tab.name }}</span>
@@ -197,13 +246,23 @@ function downloadReport() {
         <div v-else class="markdown-preview" v-html="structuredRendered"></div>
       </div>
 
-      <div v-else-if="!reportContent" class="content-empty">
+      <div v-else-if="!currentReportContent" class="content-empty">
         <FileText class="empty-icon" />
-        <p>点击上方按钮生成报告</p>
+        <p>暂无报告</p>
+        <button class="generate-btn" @click="generateReport(activeTab)">
+          <RefreshCw class="btn-icon" />
+          <span>生成报告</span>
+        </button>
       </div>
 
       <div v-else class="content-body">
-        <div class="markdown-preview" v-html="renderedContent"></div>
+        <div class="body-header">
+          <button class="regenerate-btn" @click="generateReport(activeTab)">
+            <RefreshCw class="btn-icon" />
+            <span>重新生成</span>
+          </button>
+        </div>
+        <div class="markdown-preview" v-html="currentRendered"></div>
       </div>
     </div>
   </div>
@@ -357,6 +416,30 @@ function downloadReport() {
   opacity: 0.5;
 }
 
+.generate-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: transform 0.2s;
+}
+
+.generate-btn:hover {
+  transform: translateY(-2px);
+}
+
+.btn-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .content-loading {
   display: flex;
   flex-direction: column;
@@ -377,6 +460,30 @@ function downloadReport() {
   padding: 16px;
   background: #fafafa;
   border-radius: 10px;
+}
+
+.body-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.regenerate-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: white;
+  border: 1px solid #667eea;
+  border-radius: 8px;
+  color: #667eea;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+
+.regenerate-btn:hover {
+  background: #f5f7ff;
 }
 
 .markdown-preview {
