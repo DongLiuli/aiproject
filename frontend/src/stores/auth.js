@@ -23,6 +23,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
   async function login(username, password) {
     try {
+      const oldSessionId = sessionId.value
       const response = await authAPI.login(username, password)
       token.value = response.token
       user.value = { id: response.user_id, username: response.username }
@@ -30,6 +31,14 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('token', token.value)
       localStorage.removeItem('session_id')
       sessionId.value = null
+
+      return {
+        user: user.value,
+        token: token.value,
+        hasAnonymousData: response.has_anonymous_data || false,
+        anonymousDataSummary: response.anonymous_data_summary || null,
+        oldSessionId: oldSessionId,
+      }
     } catch (error) {
       throw error
     }
@@ -63,6 +72,11 @@ export const useAuthStore = defineStore('auth', () => {
       throw error
     }
   }
+
+  async function confirmMerge(oldSessionId) {
+    return await authAPI.mergeAnonymous(oldSessionId)
+  }
+
   return {
     user,
     token,
@@ -73,5 +87,6 @@ export const useAuthStore = defineStore('auth', () => {
     register,
     logout,
     mergeAccount,
+    confirmMerge,
   }
 })

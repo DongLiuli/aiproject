@@ -11,9 +11,6 @@ export const useUserStore = defineStore('user', () => {
     llm_base_url: 'https://api.deepseek.com',
   })
   const loading = ref(false)
-  // 后端真值：当前 session/用户在服务端是否已配置 API Key
-  // （本地 llm_api_key 会随浏览器残留，不能作为「已配置」的判据，详见 #1）
-  const apiKeyConfigured = ref(false)
 
   function loadLocalConfig() {
     try {
@@ -50,11 +47,9 @@ export const useUserStore = defineStore('user', () => {
         ...config.value,
         llm_model: response.model || 'deepseek-chat',
       }
-      apiKeyConfigured.value = !!response.api_key_configured
       saveLocalConfig()
     } catch (error) {
       console.error('Failed to fetch config from API:', error)
-      apiKeyConfigured.value = false
       loadLocalConfig()
     } finally {
       loading.value = false
@@ -66,11 +61,10 @@ export const useUserStore = defineStore('user', () => {
     saveLocalConfig()
 
     try {
-      const response = await userAPI.updateConfig({
+      await userAPI.updateConfig({
         api_key: config.value.llm_api_key,
         model: config.value.llm_model,
       })
-      apiKeyConfigured.value = !!response.api_key_configured
       return { success: true, message: '配置保存成功' }
     } catch (error) {
       console.warn('API save failed, using local storage:', error)
@@ -93,7 +87,6 @@ export const useUserStore = defineStore('user', () => {
   return {
     config,
     loading,
-    apiKeyConfigured,
     fetchConfig,
     updateConfig,
     testConfig,

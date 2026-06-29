@@ -4,7 +4,6 @@ import { useAuthStore } from '@/stores/auth'
 import { usePapersStore } from '@/stores/papers'
 import { useUIStore } from '@/stores/ui'
 import { BookOpen, Upload, Settings, User, LogOut, LogIn, Menu, X } from 'lucide-vue-next'
-import AuthModal from './AuthModal.vue'
 
 const authStore = useAuthStore()
 const papersStore = usePapersStore()
@@ -27,6 +26,14 @@ async function handleLogout() {
 function openAuth(mode) {
   authMode.value = mode
   showAuthModal.value = true
+}
+
+function handleAuthClose(newMode) {
+  if (newMode) {
+    authMode.value = newMode
+  } else {
+    showAuthModal.value = false
+  }
 }
 </script>
 
@@ -93,7 +100,7 @@ function openAuth(mode) {
     <AuthModal
       v-if="showAuthModal"
       :mode="authMode"
-      @close="showAuthModal = false"
+      @close="handleAuthClose"
       @success="showAuthModal = false"
     />
   </div>

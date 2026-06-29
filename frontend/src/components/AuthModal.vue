@@ -3,12 +3,13 @@ import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePapersStore } from '@/stores/papers'
 import { X, User, Lock, Eye, EyeOff } from 'lucide-vue-next'
+import MergeConfirmModal from './MergeConfirmModal.vue'
 
 const props = defineProps({
   mode: {
     type: String,
-    default: 'login'
-  }
+    default: 'login',
+  },
 })
 
 const emit = defineEmits(['close', 'success'])
@@ -22,29 +23,53 @@ const confirmPassword = ref('')
 const showPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
+const showMergeConfirm = ref(false)
+const mergeData = ref(null)
 
 async function handleSubmit() {
+  console.log('=== handleSubmit START ===')
+  console.log('mode:', props.mode)
+  console.log('username:', username.value)
+  console.log('password:', password.value)
+  console.log('confirmPassword:', confirmPassword.value)
+  console.log('loading:', loading.value)
+  console.log('authStore:', authStore)
+
   error.value = ''
-  
+
   if (!username.value || !password.value) {
     error.value = '请填写用户名和密码'
+    console.log('Validation failed: empty username or password')
     return
   }
-  
+
   if (props.mode === 'register' && password.value !== confirmPassword.value) {
     error.value = '两次输入的密码不一致'
     return
   }
-  
+
   loading.value = true
-  
+
   try {
+    let result
+
     if (props.mode === 'login') {
-      await authStore.login(username.value, password.value)
+      result = await authStore.login(username.value, password.value)
+
+      if (result.hasAnonymousData) {
+        mergeData.value = {
+          papers: result.anonymousDataSummary?.papers || 0,
+          conversations: result.anonymousDataSummary?.conversations || 0,
+          oldSessionId: result.oldSessionId,
+        }
+        showMergeConfirm.value = true
+        loading.value = false
+        return
+      }
     } else {
       await authStore.register(username.value, password.value)
     }
-    
+
     await papersStore.fetchPapers()
     emit('success')
   } catch (err) {
@@ -52,6 +77,19 @@ async function handleSubmit() {
   } finally {
     loading.value = false
   }
+}
+
+async function handleMergeConfirm(shouldMerge) {
+  showMergeConfirm.value = false
+  if (shouldMerge && mergeData.value?.oldSessionId) {
+    try {
+      await authStore.confirmMerge(mergeData.value.oldSessionId)
+    } catch (e) {
+      console.error('合并失败:', e)
+    }
+  }
+  await papersStore.fetchPapers()
+  emit('success')
 }
 
 function togglePassword() {
@@ -68,29 +106,29 @@ function togglePassword() {
           <X class="close-icon" />
         </button>
       </div>
-      
+
       <form class="auth-form" @submit.prevent="handleSubmit">
         <div class="form-group">
           <label class="form-label">
             <User class="label-icon" />
             <span>用户名</span>
           </label>
-          <input 
-            type="text" 
+          <input
+            type="text"
             v-model="username"
             class="form-input"
             placeholder="请输入用户名"
             :disabled="loading"
           />
         </div>
-        
+
         <div class="form-group">
           <label class="form-label">
             <Lock class="label-icon" />
             <span>密码</span>
           </label>
           <div class="password-input">
-            <input 
+            <input
               :type="showPassword ? 'text' : 'password'"
               v-model="password"
               class="form-input"
@@ -103,44 +141,52 @@ function togglePassword() {
             </button>
           </div>
         </div>
-        
+
         <div v-if="mode === 'register'" class="form-group">
           <label class="form-label">
             <Lock class="label-icon" />
             <span>确认密码</span>
           </label>
-          <input 
-            type="password" 
+          <input
+            type="password"
             v-model="confirmPassword"
             class="form-input"
             placeholder="请再次输入密码"
             :disabled="loading"
           />
         </div>
-        
+
         <div v-if="error" class="error-message">
           {{ error }}
         </div>
-        
-        <button 
-          type="submit" 
-          class="submit-btn"
-          :disabled="loading"
-        >
+
+        <button type="button" class="submit-btn" :disabled="loading" @click="handleSubmit">
           <span v-if="loading">处理中...</span>
           <span v-else>{{ mode === 'login' ? '登录' : '注册' }}</span>
         </button>
-        
+
         <div class="switch-mode">
           <span>
             {{ mode === 'login' ? '还没有账号？' : '已有账号？' }}
-            <button type="button" class="mode-switch-btn" @click="$emit('close', mode === 'login' ? 'register' : 'login')">
+            <button
+              type="button"
+              class="mode-switch-btn"
+              @click="$emit('close', mode === 'login' ? 'register' : 'login')"
+            >
               {{ mode === 'login' ? '立即注册' : '立即登录' }}
             </button>
           </span>
         </div>
       </form>
     </div>
+
+    <MergeConfirmModal
+      v-if="showMergeConfirm"
+      :papers-count="mergeData?.papers || 0"
+      :conversations-count="mergeData?.conversations || 0"
+      @confirm="handleMergeConfirm(true)"
+      @cancel="handleMergeConfirm(false)"
+    />
   </div>
 </template>
 
@@ -229,7 +275,9 @@ function togglePassword() {
   border: 1px solid #e0e0e0;
   border-radius: 10px;
   font-size: 1rem;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
 .form-input:focus {
@@ -281,7 +329,9 @@ function togglePassword() {
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s;
 }
 
 .submit-btn:hover:not(:disabled) {
