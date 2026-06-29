@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { FileText, Clock, Trash2, RefreshCw, ChevronRight } from 'lucide-vue-next'
+import { FileText, Clock, Trash2, RefreshCw, ChevronRight, AlertCircle } from 'lucide-vue-next'
 
 const props = defineProps({
   paper: {
@@ -83,6 +83,15 @@ const formatSize = (bytes) => {
       </span>
     </div>
 
+    <div
+      v-if="paper.parse_status === 'failed' && paper.parse_error"
+      class="parse-error"
+      @click.stop
+    >
+      <AlertCircle class="parse-error-icon" />
+      <span>{{ paper.parse_error }}</span>
+    </div>
+
     <div v-if="paper.authors" class="paper-authors">
       {{ paper.authors }}
     </div>
@@ -128,6 +137,27 @@ const formatSize = (bytes) => {
   align-items: flex-start;
   gap: 16px;
   margin-bottom: 12px;
+}
+
+.parse-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #fef2f2;
+  color: #ef4444;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.parse-error-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .paper-icon {

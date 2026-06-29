@@ -48,8 +48,11 @@ async function handleUpload() {
  error.value = '请先选择文件';
  return;
  }
- if (!userStore.config.llm_api_key) {
- error.value = '请先在设置页配置 API Key';
+ // 以后端真值为准：拉取当前 session/用户在服务端的配置状态，
+ // 避免浏览器本地残留的 llm_api_key 骗过校验（详见 #1）
+ await userStore.fetchConfig();
+ if (!userStore.apiKeyConfigured) {
+ error.value = '请先在设置页为当前账号/会话配置 API Key';
  return;
  }
  try {
