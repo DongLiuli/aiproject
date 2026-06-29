@@ -1,6 +1,8 @@
 """
 报告接口：生成研读报告
 """
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -50,17 +52,27 @@ def generate_report_endpoint(paper_id: str, body: GenerateReportRequest, user_id
 
     content = result.get("content", "")
 
-    # 保存到数据库
+    # 保存到数据库：同一论文 + 用户 + 报告类型只保留最新一条（覆盖式 upsert）
     import uuid
-    report = Report(
-        report_id=str(uuid.uuid4()),
-        paper_id=paper_id,
-        user_id=user_id,
-        report_type=body.report_type,
-        content=content,
-        format="markdown",
-    )
-    db.add(report)
+    report = db.query(Report).filter(
+        Report.paper_id == paper_id,
+        Report.user_id == user_id,
+        Report.report_type == body.report_type,
+    ).first()
+    if report:
+        report.content = content
+        report.format = "markdown"
+        report.generated_at = datetime.utcnow()
+    else:
+        report = Report(
+            report_id=str(uuid.uuid4()),
+            paper_id=paper_id,
+            user_id=user_id,
+            report_type=body.report_type,
+            content=content,
+            format="markdown",
+        )
+        db.add(report)
     db.commit()
 
     return {
@@ -69,4 +81,25 @@ def generate_report_endpoint(paper_id: str, body: GenerateReportRequest, user_id
         "content": content,
         "format": "markdown",
         "generated_at": report.generated_at.isoformat(),
+    }
+
+
+@router.get("/{paper_id}")
+def list_reports(paper_id: str, user_id: str = Depends(get_current_user)):
+    """获取某篇论文已生成的研读报告（按类型各保留最新一条）"""
+    db = next(get_db())
+
+    reports = db.query(Report).filter(
+        Report.paper_id == paper_id,
+        Report.user_id == user_id,
+    ).order_by(Report.generated_at.desc()).all()
+
+    return {
+        "reports": [{
+            "report_id": r.report_id,
+            "report_type": r.report_type,
+            "content": r.content,
+            "format": r.format,
+            "generated_at": r.generated_at.isoformat(),
+        } for r in reports]
     }
