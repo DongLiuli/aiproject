@@ -46,13 +46,26 @@ async def upload_paper(
     if len(content) > MAX_UPLOAD_SIZE:
         raise HTTPException(413, detail={"error": {"code": "FILE_TOO_LARGE", "message": "文件大小超过 50MB 限制"}})
 
-    # 3. 保存文件
+    # 3. 前置校验 API Key：未配置则直接拒绝，不落盘、不入库、不起后台任务
+    #    user_id 可能是 JWT 用户 id，也可能是匿名 X-Session-ID，用户行可能不存在 → 同样视为未配置
+    db = next(get_db())
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = None
+    if user and user.api_key_encrypted:
+        try:
+            api_key = _decrypt(user.api_key_encrypted)
+        except Exception:
+            api_key = None  # 存储的 Key 损坏，按未配置处理
+    if not api_key:
+        raise HTTPException(400, detail={"error": {"code": "API_KEY_NOT_CONFIGURED", "message": "请先在设置页配置 API Key"}})
+
+    # 4. 保存文件
     paper_id = str(uuid.uuid4())
     file_path = os.path.join(UPLOAD_DIR, f"{paper_id}.pdf")
     with open(file_path, "wb") as f:
         f.write(content)
 
-    # 4. 快速检测 PDF 可读性
+    # 5. 快速检测 PDF 可读性
     try:
         import fitz
         doc = fitz.open(file_path)
@@ -61,8 +74,7 @@ async def upload_paper(
         os.remove(file_path)
         raise HTTPException(422, detail={"error": {"code": "PDF_UNREADABLE", "message": "PDF 文件损坏或无法读取，请确认文件完整"}})
 
-    # 5. 写入数据库
-    db = next(get_db())
+    # 6. 写入数据库（复用上面已打开的 db 会话）
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
     paper = Paper(
         paper_id=paper_id,
@@ -77,7 +89,7 @@ async def upload_paper(
     db.add(paper)
     db.commit()
 
-    # 6. 触发异步解析
+    # 7. 触发异步解析
     background_tasks.add_task(_run_parse_pipeline, paper_id, user_id)
 
     return {

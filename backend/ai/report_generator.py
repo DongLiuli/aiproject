@@ -135,9 +135,29 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
             logger.error("[报告生成] 未找到相关内容")
             return {"success": False, "error": "未找到相关内容"}
 
-        # 构建上下文
-        context = "\n\n".join([f"【第{c['page']}页 - {c['section_title']}】\n{c['content']}" for c in all_chunks])
-        logger.info(f"[报告生成] 构建上下文完成，长度: {len(context)} 字符")
+        # 按相关度排序（方案2）
+        logger.info("[报告生成] 按相关度排序分块")
+        all_chunks.sort(key=lambda x: x.get("score", 0), reverse=True)
+        
+        # 构建上下文（方案4：按分块边界截断）
+        max_context_length = 16000  # 适度调大阈值（方案1）
+        context = ""
+        selected_chunks = []
+        
+        for chunk in all_chunks:
+            chunk_text = f"【第{chunk['page']}页 - {chunk['section_title']}】\n{chunk['content']}"
+            
+            # 检查添加上此分块后是否超限
+            if len(context) + len(chunk_text) + 2 <= max_context_length:
+                if context:  # 第一个分块前不加空行
+                    context += "\n\n"
+                context += chunk_text
+                selected_chunks.append(chunk)
+            else:
+                # 超过限制，停止添加
+                break
+        
+        logger.info(f"[报告生成] 选择了 {len(selected_chunks)}/{len(all_chunks)} 个分块，长度: {len(context)} 字符")
 
         # 构建 Prompt
         logger.info("[报告生成] 构建Prompt")
@@ -207,12 +227,7 @@ def _build_report_prompt(context: str, report_type: str, report_title: str) -> s
 请使用 Markdown 格式输出，语言简洁明了。
 """
     
-    # 限制上下文长度，避免超出Token限制
-    max_context_length = 8000
-    if len(context) > max_context_length:
-        logger.warning(f"[报告生成] 上下文过长({len(context)}字符)，截断至{max_context_length}字符")
-        context = context[:max_context_length]
-    
+    # 上下文已在前面按分块边界智能截断，保留最相关内容
     prompt = prompt_template.format(
         report_title=report_title,
         context=context
