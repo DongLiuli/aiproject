@@ -89,7 +89,7 @@ async function testConfig() {
               class="form-input"
               placeholder="请输入您的 API Key"
             />
-            <p class="form-hint">您的 API Key 不会被存储在服务端，仅用于本次会话</p>
+            <p class="form-hint">您的 API Key 将被加密存储在服务端，仅用于解析您的论文</p>
           </div>
         </div>
 

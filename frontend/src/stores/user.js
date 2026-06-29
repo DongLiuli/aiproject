@@ -73,8 +73,10 @@ export const useUserStore = defineStore('user', () => {
       apiKeyConfigured.value = !!response.api_key_configured
       return { success: true, message: '配置保存成功' }
     } catch (error) {
-      console.warn('API save failed, using local storage:', error)
-      return { success: true, message: '配置已保存到本地', localOnly: true }
+      // 后端保存失败时如实上报失败，不再谎报成功（详见 #3）
+      // apiKeyConfigured 仅在上面成功路径置 true，此处失败不会被翻成 true
+      console.error('API save failed:', error)
+      return { success: false, message: '配置保存失败，请重试' }
     }
   }
 
