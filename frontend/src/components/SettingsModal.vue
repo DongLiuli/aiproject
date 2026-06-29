@@ -29,8 +29,8 @@ watch(
 async function saveConfig() {
   saving.value = true
   try {
-    await userStore.updateConfig(config.value)
-    testResult.value = { success: true, message: '配置保存成功' }
+    const result = await userStore.updateConfig(config.value)
+    testResult.value = { success: result.success, message: result.message }
   } catch (_err) {
     testResult.value = { success: false, message: '保存失败，请重试' }
   } finally {
@@ -39,7 +39,7 @@ async function saveConfig() {
 }
 async function testConfig() {
   try {
-    const success = await userStore.testConfig()
+    const success = await userStore.testConfig(config.value)
     testResult.value = success
       ? { success: true, message: '配置测试成功' }
       : { success: false, message: '配置测试失败，请检查API密钥' }
@@ -89,7 +89,7 @@ async function testConfig() {
               class="form-input"
               placeholder="请输入您的 API Key"
             />
-            <p class="form-hint">您的 API Key 不会被存储在服务端，仅用于本次会话</p>
+            <p class="form-hint">您的 API Key 将被加密存储在服务端，仅用于解析您的论文</p>
           </div>
         </div>
 

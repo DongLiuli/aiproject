@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { userAPI } from '@/api'
+
+const LOCAL_STORAGE_KEY = 'lit-ai-user-config'
+
 export const useUserStore = defineStore('user', () => {
   const config = ref({
     llm_api_key: '',
@@ -8,6 +11,37 @@ export const useUserStore = defineStore('user', () => {
     llm_base_url: 'https://api.deepseek.com',
   })
   const loading = ref(false)
+  // 后端真值：当前 session/用户在服务端是否已配置 API Key
+  // （本地 llm_api_key 会随浏览器残留，不能作为「已配置」的判据，详见 #1）
+  const apiKeyConfigured = ref(false)
+
+  function loadLocalConfig() {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        config.value = { ...config.value, ...parsed }
+      }
+    } catch (error) {
+      console.warn('Failed to load local config:', error)
+    }
+  }
+
+  function saveLocalConfig() {
+    try {
+      localStorage.setItem(
+        LOCAL_STORAGE_KEY,
+        JSON.stringify({
+          llm_api_key: config.value.llm_api_key,
+          llm_model: config.value.llm_model,
+          llm_base_url: config.value.llm_base_url,
+        }),
+      )
+    } catch (error) {
+      console.warn('Failed to save local config:', error)
+    }
+  }
+
   async function fetchConfig() {
     loading.value = true
     try {
@@ -16,39 +50,55 @@ export const useUserStore = defineStore('user', () => {
         ...config.value,
         llm_model: response.model || 'deepseek-chat',
       }
+      apiKeyConfigured.value = !!response.api_key_configured
+      saveLocalConfig()
     } catch (error) {
-      console.error('Failed to fetch config:', error)
+      console.error('Failed to fetch config from API:', error)
+      apiKeyConfigured.value = false
+      loadLocalConfig()
     } finally {
       loading.value = false
     }
   }
+
   async function updateConfig(newConfig) {
+    config.value = { ...config.value, ...newConfig }
+    saveLocalConfig()
+
     try {
-      config.value = { ...config.value, ...newConfig }
-      await userAPI.updateConfig({
+      const response = await userAPI.updateConfig({
         api_key: config.value.llm_api_key,
         model: config.value.llm_model,
       })
+      apiKeyConfigured.value = !!response.api_key_configured
+      return { success: true, message: '配置保存成功' }
     } catch (error) {
-      throw error
+      // 后端保存失败时如实上报失败，不再谎报成功（详见 #3）
+      // apiKeyConfigured 仅在上面成功路径置 true，此处失败不会被翻成 true
+      console.error('API save failed:', error)
+      return { success: false, message: '配置保存失败，请重试' }
     }
   }
-  async function testConfig() {
+
+  async function testConfig(cfg) {
     try {
       const response = await userAPI.testConfig({
-        api_key: config.value.llm_api_key,
-        model: config.value.llm_model,
+        api_key: cfg?.llm_api_key || config.value.llm_api_key,
+        model: cfg?.llm_model || config.value.llm_model,
       })
       return response.ok
     } catch (error) {
       return false
     }
   }
+
   return {
     config,
     loading,
+    apiKeyConfigured,
     fetchConfig,
     updateConfig,
     testConfig,
+    loadLocalConfig,
   }
 })

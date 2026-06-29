@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { FileText, Clock, Trash2, RefreshCw, ChevronRight } from 'lucide-vue-next'
+import { FileText, Clock, Trash2, RefreshCw, ChevronRight, AlertCircle } from 'lucide-vue-next'
 
 const props = defineProps({
   paper: {
@@ -83,6 +83,15 @@ const formatSize = (bytes) => {
       </span>
     </div>
 
+    <div
+      v-if="paper.parse_status === 'failed' && paper.parse_error"
+      class="parse-error"
+      @click.stop
+    >
+      <AlertCircle class="parse-error-icon" />
+      <span>{{ paper.parse_error }}</span>
+    </div>
+
     <div v-if="paper.authors" class="paper-authors">
       {{ paper.authors }}
     </div>
@@ -91,14 +100,13 @@ const formatSize = (bytes) => {
       {{ paper.summary }}
     </div>
 
+    <div v-if="paper.parse_status === 'failed' && paper.parse_error" class="parse-error">
+      {{ paper.parse_error }}
+    </div>
+
     <div class="card-footer">
       <div class="card-actions">
-        <button
-          class="action-btn"
-          v-if="paper.parse_status !== 'parsing'"
-          @click.stop="emit('reparse', paper.paper_id)"
-          title="重新解析"
-        >
+        <button class="action-btn" @click.stop="emit('reparse', paper.paper_id)" title="重新解析">
           <RefreshCw class="action-icon" />
         </button>
         <button class="action-btn delete" @click.stop="emit('delete', paper.paper_id)" title="删除">
@@ -133,6 +141,27 @@ const formatSize = (bytes) => {
   align-items: flex-start;
   gap: 16px;
   margin-bottom: 12px;
+}
+
+.parse-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #fef2f2;
+  color: #ef4444;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.parse-error-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .paper-icon {
@@ -229,6 +258,16 @@ const formatSize = (bytes) => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-bottom: 16px;
+}
+
+.parse-error {
+  font-size: 0.875rem;
+  color: #dc2626;
+  background: #fef2f2;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  border-left: 3px solid #dc2626;
 }
 
 .card-footer {

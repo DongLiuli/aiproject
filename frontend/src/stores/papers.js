@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { papersAPI, qaAPI, reportsAPI } from '@/api'
+import { savePDF, getPDFUrl, hasPDF, deletePDF } from '@/utils/pdfStorage'
 export const usePapersStore = defineStore('papers', () => {
   const papers = ref([])
   const currentPaper = ref(null)
   const loading = ref(false)
   const uploading = ref(false)
   const pollingPaperId = ref(null)
+  const pdfCache = ref(new Map())
   let pollInterval = null
 
   function startPolling(paperId) {
@@ -39,6 +41,49 @@ export const usePapersStore = defineStore('papers', () => {
     }
     pollingPaperId.value = null
   }
+
+  function cachePdf(paperId, file) {
+    const blobUrl = URL.createObjectURL(file)
+    pdfCache.value.set(paperId, blobUrl)
+    return blobUrl
+  }
+
+  function getCachedPdf(paperId) {
+    return pdfCache.value.get(paperId) || null
+  }
+
+  function clearPdfCache(paperId) {
+    const url = pdfCache.value.get(paperId)
+    if (url) {
+      URL.revokeObjectURL(url)
+    }
+    pdfCache.value.delete(paperId)
+  }
+
+  function clearAllPdfCache() {
+    pdfCache.value.forEach((url) => {
+      URL.revokeObjectURL(url)
+    })
+    pdfCache.value.clear()
+  }
+
+  async function fetchPdf(paperId) {
+    const cached = pdfCache.value.get(paperId)
+    if (cached) {
+      console.log('fetchPdf: using memory cache')
+      return cached
+    }
+
+    const url = await getPDFUrl(paperId)
+    if (url) {
+      console.log('fetchPdf: loaded from IndexedDB')
+      pdfCache.value.set(paperId, url)
+      return url
+    }
+
+    return null
+  }
+
   async function fetchPapers() {
     loading.value = true
     try {
@@ -55,11 +100,20 @@ export const usePapersStore = defineStore('papers', () => {
     try {
       const formData = new FormData()
       formData.append('file', file)
+
       const response = await papersAPI.upload(formData)
+
+      const paperId = response.paper_id || response.paperId
+      if (paperId) {
+        await savePDF(paperId, file)
+      }
+
       await fetchPapers()
+
       if (response.paper_id) {
         startPolling(response.paper_id)
       }
+
       return response
     } catch (error) {
       throw error
@@ -67,6 +121,12 @@ export const usePapersStore = defineStore('papers', () => {
       uploading.value = false
     }
   }
+  async function reloadPdfFromFile(paperId, file) {
+    cachePdf(paperId, file)
+    await savePDF(paperId, file)
+    return pdfCache.value.get(paperId)
+  }
+
   async function getPaper(paperId) {
     loading.value = true
     try {
@@ -101,6 +161,8 @@ export const usePapersStore = defineStore('papers', () => {
       if (currentPaper.value?.paper_id === paperId) {
         currentPaper.value = null
       }
+      clearPdfCache(paperId)
+      await deletePDF(paperId)
     } catch (error) {
       throw error
     }
@@ -128,6 +190,12 @@ export const usePapersStore = defineStore('papers', () => {
     reparsePaper,
     startPolling,
     stopPolling,
+    cachePdf,
+    getCachedPdf,
+    clearPdfCache,
+    clearAllPdfCache,
+    fetchPdf,
+    reloadPdfFromFile,
   }
 })
 export const useQAStore = defineStore('qa', () => {
@@ -196,10 +264,22 @@ export const useReportsStore = defineStore('reports', () => {
   function getReport(paperId, reportType) {
     return reports.value[paperId]?.[reportType]
   }
+
+  async function getReports(paperId) {
+    const response = await reportsAPI.getReports(paperId)
+    const list = response.reports || []
+    if (!reports.value[paperId]) reports.value[paperId] = {}
+    for (const r of list) {
+      reports.value[paperId][r.report_type] = r.content
+    }
+    return reports.value[paperId]
+  }
+
   return {
     reports,
     generating,
     generateReport,
     getReport,
+    getReports,
   }
 })

@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, JSON, ForeignKey, create_engine, Text
+from sqlalchemy.dialects.mysql import MEDIUMTEXT, LONGTEXT
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 from .config import DATABASE_URL
@@ -115,19 +116,19 @@ class PaperStructuredInfo(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     paper_id = Column(String(36), ForeignKey("papers.paper_id"), unique=True, nullable=False)
-    research_background = Column(Text, nullable=True)
-    research_questions = Column(Text, nullable=True)
-    method_flow = Column(Text, nullable=True)
+    research_background = Column(MEDIUMTEXT, nullable=True)
+    research_questions = Column(MEDIUMTEXT, nullable=True)
+    method_flow = Column(MEDIUMTEXT, nullable=True)
     model_algorithm = Column(String(500), nullable=True)
-    dataset_info = Column(Text, nullable=True)
+    dataset_info = Column(MEDIUMTEXT, nullable=True)
     evaluation_metrics = Column(JSON, nullable=True)
-    experiment_results = Column(Text, nullable=True)
-    innovations = Column(Text, nullable=True)
-    limitations = Column(Text, nullable=True)
-    future_work = Column(Text, nullable=True)
+    experiment_results = Column(MEDIUMTEXT, nullable=True)
+    innovations = Column(MEDIUMTEXT, nullable=True)
+    limitations = Column(MEDIUMTEXT, nullable=True)
+    future_work = Column(MEDIUMTEXT, nullable=True)
     figures_tables = Column(JSON, nullable=True)   # list[dict]
     references = Column(JSON, nullable=True)        # list[dict]
-    full_text = Column(Text, nullable=True)         # 提取的原文文本
+    full_text = Column(LONGTEXT, nullable=True)  # 提取的原文文本
     sections = Column(JSON, nullable=True)          # list[dict]
     extracted_at = Column(DateTime, default=datetime.utcnow)
 
