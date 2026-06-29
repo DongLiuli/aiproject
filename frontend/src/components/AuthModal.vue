@@ -27,19 +27,10 @@ const showMergeConfirm = ref(false)
 const mergeData = ref(null)
 
 async function handleSubmit() {
-  console.log('=== handleSubmit START ===')
-  console.log('mode:', props.mode)
-  console.log('username:', username.value)
-  console.log('password:', password.value)
-  console.log('confirmPassword:', confirmPassword.value)
-  console.log('loading:', loading.value)
-  console.log('authStore:', authStore)
-
   error.value = ''
 
   if (!username.value || !password.value) {
     error.value = '请填写用户名和密码'
-    console.log('Validation failed: empty username or password')
     return
   }
 

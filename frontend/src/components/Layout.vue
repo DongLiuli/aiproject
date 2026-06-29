@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import { usePapersStore } from '@/stores/papers'
 import { useUIStore } from '@/stores/ui'
 import { BookOpen, Upload, Settings, User, LogOut, LogIn, Menu, X } from 'lucide-vue-next'
+import AuthModal from './AuthModal.vue'
 
 const authStore = useAuthStore()
 const papersStore = usePapersStore()
