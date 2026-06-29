@@ -100,6 +100,10 @@ const formatSize = (bytes) => {
       {{ paper.summary }}
     </div>
 
+    <div v-if="paper.parse_status === 'failed' && paper.parse_error" class="parse-error">
+      {{ paper.parse_error }}
+    </div>
+
     <div class="card-footer">
       <div class="card-actions">
         <button class="action-btn" @click.stop="emit('reparse', paper.paper_id)" title="重新解析">
@@ -254,6 +258,16 @@ const formatSize = (bytes) => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-bottom: 16px;
+}
+
+.parse-error {
+  font-size: 0.875rem;
+  color: #dc2626;
+  background: #fef2f2;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  border-left: 3px solid #dc2626;
 }
 
 .card-footer {

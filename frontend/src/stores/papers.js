@@ -264,10 +264,22 @@ export const useReportsStore = defineStore('reports', () => {
   function getReport(paperId, reportType) {
     return reports.value[paperId]?.[reportType]
   }
+
+  async function getReports(paperId) {
+    const response = await reportsAPI.getReports(paperId)
+    const list = response.reports || []
+    if (!reports.value[paperId]) reports.value[paperId] = {}
+    for (const r of list) {
+      reports.value[paperId][r.report_type] = r.content
+    }
+    return reports.value[paperId]
+  }
+
   return {
     reports,
     generating,
     generateReport,
     getReport,
+    getReports,
   }
 })

@@ -122,6 +122,10 @@ export const reportsAPI = {
   generate(paperId, reportType) {
     return api.post(`/api/reports/${paperId}`, { report_type: reportType })
   },
+
+  getReports(paperId) {
+    return api.get(`/api/reports/${paperId}`)
+  },
 }
 
 export default api

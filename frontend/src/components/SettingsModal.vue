@@ -39,7 +39,7 @@ async function saveConfig() {
 }
 async function testConfig() {
   try {
-    const success = await userStore.testConfig()
+    const success = await userStore.testConfig(config.value)
     testResult.value = success
       ? { success: true, message: '配置测试成功' }
       : { success: false, message: '配置测试失败，请检查API密钥' }

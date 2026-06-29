@@ -80,11 +80,11 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  async function testConfig() {
+  async function testConfig(cfg) {
     try {
       const response = await userAPI.testConfig({
-        api_key: config.value.llm_api_key,
-        model: config.value.llm_model,
+        api_key: cfg?.llm_api_key || config.value.llm_api_key,
+        model: cfg?.llm_model || config.value.llm_model,
       })
       return response.ok
     } catch (error) {
