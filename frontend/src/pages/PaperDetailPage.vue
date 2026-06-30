@@ -8,7 +8,6 @@ import {
   Clock,
   Users,
   Calendar,
-  BookOpen,
   MessageSquare,
   FileOutput,
 } from 'lucide-vue-next'
@@ -18,7 +17,8 @@ import ReportPanel from '@/components/ReportPanel.vue'
 const route = useRoute()
 const router = useRouter()
 const papersStore = usePapersStore()
-const activeTab = ref('content')
+// 右栏在「智能问答 / 研读报告」间切换，默认问答；左栏 PaperContent 常显
+const rightTab = ref('qa')
 const paperId = computed(() => route.params.id)
 const paper = computed(() => papersStore.currentPaper)
 onMounted(async () => {
@@ -32,11 +32,6 @@ onMounted(async () => {
 function goBack() {
   router.push('/')
 }
-const tabs = [
-  { id: 'content', name: '论文内容', icon: BookOpen },
-  { id: 'qa', name: '智能问答', icon: MessageSquare },
-  { id: 'report', name: '研读报告', icon: FileOutput },
-]
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
   const date = new Date(dateStr)
@@ -103,25 +98,39 @@ const formatSize = (bytes) => {
         </span>
       </div>
 
-      <div class="detail-tabs">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          class="tab-btn"
-          :class="{ 'tab-active': activeTab === tab.id }"
-          @click="activeTab = tab.id"
-        >
-          <component :is="tab.icon" class="tab-icon" />
-          <span>{{ tab.name }}</span>
-        </button>
-      </div>
-
       <div class="detail-content">
-        <PaperContent v-if="activeTab === 'content'" :paper="paper" />
+        <div class="left-pane">
+          <PaperContent :paper="paper" />
+        </div>
 
-        <QAInterface v-else-if="activeTab === 'qa'" :paper-id="paperId" />
+        <div class="right-pane">
+          <div class="pane-switch">
+            <button
+              class="switch-btn"
+              :class="{ 'switch-active': rightTab === 'qa' }"
+              @click="rightTab = 'qa'"
+            >
+              <MessageSquare class="switch-icon" />
+              <span>智能问答</span>
+            </button>
+            <button
+              class="switch-btn"
+              :class="{ 'switch-active': rightTab === 'report' }"
+              @click="rightTab = 'report'"
+            >
+              <FileOutput class="switch-icon" />
+              <span>研读报告</span>
+            </button>
+          </div>
 
-        <ReportPanel v-else-if="activeTab === 'report'" :paper-id="paperId" :paper="paper" />
+          <QAInterface v-show="rightTab === 'qa'" class="pane-body" :paper-id="paperId" />
+          <ReportPanel
+            v-show="rightTab === 'report'"
+            class="pane-body"
+            :paper-id="paperId"
+            :paper="paper"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -161,13 +170,16 @@ const formatSize = (bytes) => {
 }
 
 .paper-detail {
-  max-width: 1200px;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
   padding: 24px;
+  box-sizing: border-box;
 }
 
 .detail-header {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .back-btn {
@@ -198,7 +210,8 @@ const formatSize = (bytes) => {
   background: white;
   border-radius: 16px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .paper-icon {
@@ -276,17 +289,41 @@ const formatSize = (bytes) => {
   color: #dc2626;
 }
 
-.detail-tabs {
+.detail-content {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: 16px;
 }
 
-.tab-btn {
+.left-pane {
+  flex: 1.2;
+  min-width: 0;
+  overflow: auto;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.right-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pane-switch {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.switch-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 24px;
+  padding: 12px 20px;
   background: white;
   border: 1px solid #e0e0e0;
   border-radius: 12px;
@@ -297,24 +334,47 @@ const formatSize = (bytes) => {
   transition: all 0.2s;
 }
 
-.tab-btn:hover {
+.switch-btn:hover {
   border-color: #667eea;
   color: #667eea;
 }
 
-.tab-active {
+.switch-active {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border-color: #667eea;
   color: white;
 }
 
-.tab-icon {
+.switch-icon {
   width: 18px;
   height: 18px;
 }
 
-.detail-content {
-  min-height: 500px;
+/* 子组件根元素：填满右栏剩余高度，内部各自滚动 */
+.pane-body {
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .paper-detail {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .detail-content {
+    flex-direction: column;
+  }
+
+  .left-pane {
+    height: 70vh;
+    flex: none;
+  }
+
+  .right-pane {
+    height: 80vh;
+    flex: none;
+  }
 }
 
 @media (max-width: 768px) {

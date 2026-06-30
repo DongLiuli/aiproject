@@ -1,4 +1,4 @@
-<script setup>import { ref, watch } from 'vue';
+<script setup>import { ref, watch, nextTick } from 'vue';
 import { useQAStore } from '@/stores/papers';
 import { Send, Loader2, MessageSquare, FileText } from 'lucide-vue-next';
 const props = defineProps({
@@ -10,20 +10,46 @@ const props = defineProps({
 const qaStore = useQAStore();
 const question = ref('');
 const messages = ref([]);
+const messagesEl = ref(null);
 watch(() => props.paperId, async (newId) => {
  if (newId) {
  await loadHistory();
  }
-});
+}, { immediate: true });
+function scrollToBottom() {
+ nextTick(() => {
+ const el = messagesEl.value;
+ if (el) el.scrollTop = el.scrollHeight;
+ });
+}
 async function loadHistory() {
  try {
- const history = await qaStore.getConversationHistory(props.paperId);
- messages.value = history.map(h => ({
- question: h.question,
- answer: h.answer,
- sources: h.sources || [],
- timestamp: h.timestamp
- }));
+ const conversations = await qaStore.getConversationHistory(props.paperId);
+ // 接口按 created_at 倒序返回对话，反转为正序（最早的在最上面）
+ const ordered = [...(conversations || [])].reverse();
+ const flat = [];
+ for (const conv of ordered) {
+ let pending = null;
+ for (const m of conv.messages || []) {
+ if (m.role === 'user') {
+ if (pending) flat.push(pending);
+ pending = { question: m.content, answer: null, sources: [], timestamp: m.created_at };
+ } else if (m.role === 'assistant') {
+ if (pending) {
+ pending.answer = m.content;
+ pending.sources = m.sources || [];
+ pending.timestamp = m.created_at;
+ flat.push(pending);
+ pending = null;
+ } else {
+ flat.push({ question: '', answer: m.content, sources: m.sources || [], timestamp: m.created_at });
+ }
+ }
+ }
+ if (pending) flat.push(pending);
+ }
+ messages.value = flat;
+ scrollToBottom();
  }
  catch (err) {
  console.error('Failed to load history:', err);
@@ -40,6 +66,7 @@ async function sendQuestion() {
  loading: true
  });
  question.value = '';
+ scrollToBottom();
  try {
  const response = await qaStore.askQuestion(props.paperId, newQuestion);
  const index = messages.value.findIndex(m => m.question === newQuestion && m.loading);
@@ -51,8 +78,9 @@ async function sendQuestion() {
  timestamp: new Date().toISOString()
  };
  }
+ scrollToBottom();
  }
- catch (err) {
+ catch {
  const index = messages.value.findIndex(m => m.question === newQuestion && m.loading);
  if (index !== -1) {
  messages.value[index] = {
@@ -79,7 +107,7 @@ function formatDate(dateStr) {
       <h3>智能问答</h3>
     </div>
     
-    <div class="qa-messages">
+    <div class="qa-messages" ref="messagesEl">
       <div v-if="messages.length === 0" class="empty-state">
         <MessageSquare class="empty-icon" />
         <p>向论文提出问题，获取智能回答</p>
