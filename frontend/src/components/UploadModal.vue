@@ -57,7 +57,7 @@ async function handleUpload() {
  emit('close');
  }
  catch (err) {
- error.value = err.response?.data?.detail || '上传失败，请重试';
+ error.value = err.userMessage || '上传失败，请重试';
  }
 }
 </script>

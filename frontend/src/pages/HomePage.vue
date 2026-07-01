@@ -23,7 +23,10 @@ function filterPapers() {
   const query = searchQuery.value.toLowerCase()
   filteredPapers.value = papersStore.papers.filter((paper) => {
     const title = paper.title?.toLowerCase() || paper.file_name?.toLowerCase() || ''
-    const authors = paper.authors?.toLowerCase() || ''
+    const authors = (Array.isArray(paper.authors)
+      ? paper.authors.join(' ')
+      : paper.authors || ''
+    ).toLowerCase()
     return title.includes(query) || authors.includes(query)
   })
 }

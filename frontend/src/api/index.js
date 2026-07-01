@@ -28,6 +28,12 @@ api.interceptors.response.use(
   (response) => response.data,
   (error) => {
     console.error('API Error:', error.response?.data || error.message)
+    const detail = error.response?.data?.detail
+    error.userMessage =
+      detail?.error?.message ||
+      (typeof detail === 'string' ? detail : '') ||
+      error.message ||
+      '操作失败，请重试'
     throw error
   },
 )

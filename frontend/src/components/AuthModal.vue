@@ -64,7 +64,7 @@ async function handleSubmit() {
     await papersStore.fetchPapers()
     emit('success')
   } catch (err) {
-    error.value = err.response?.data?.detail || '操作失败，请重试'
+    error.value = err.userMessage || '操作失败，请重试'
   } finally {
     loading.value = false
   }

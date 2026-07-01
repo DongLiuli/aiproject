@@ -143,7 +143,7 @@ async function generateReport(type) {
     const content = await reportsStore.generateReport(props.paperId, type)
     reportContent.value = content
   } catch (err) {
-    const errorMsg = err.response?.data?.error?.message || '报告生成失败，请重试'
+    const errorMsg = err.userMessage || '报告生成失败，请重试'
     reportContent.value = errorMsg
   } finally {
     generating.value = false

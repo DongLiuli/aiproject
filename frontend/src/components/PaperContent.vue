@@ -19,7 +19,8 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
-import { getPDFUrl } from '@/utils/pdfStorage'
+import { getPDFUrl, savePDF } from '@/utils/pdfStorage'
+import { papersAPI } from '@/api'
 
 const props = defineProps({
   paper: {
@@ -31,6 +32,18 @@ const props = defineProps({
 const pdfUrl = ref('')
 const loading = ref(true)
 const error = ref(null)
+
+async function fetchFromBackend(paperId) {
+  try {
+    const res = await papersAPI.downloadPdf(paperId) // 原始 axios，res.data 即 blob
+    const blob = res.data
+    savePDF(paperId, blob) // 回写 IndexedDB，下次秒开
+    return URL.createObjectURL(blob)
+  } catch (err) {
+    console.error('回源下载 PDF 失败:', err)
+    return null
+  }
+}
 
 async function loadPDF() {
   if (!props.paper.paper_id) {
@@ -49,7 +62,13 @@ async function loadPDF() {
     if (url) {
       pdfUrl.value = url
     } else {
-      error.value = 'pdf_not_found'
+      // 本地 IndexedDB 没有（跨设备 / 清缓存）→ 回源后端下载
+      const blobUrl = await fetchFromBackend(props.paper.paper_id)
+      if (blobUrl) {
+        pdfUrl.value = blobUrl
+      } else {
+        error.value = 'pdf_not_found'
+      }
     }
   } catch (err) {
     console.error('加载 PDF 失败:', err)

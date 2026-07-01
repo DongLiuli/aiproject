@@ -80,12 +80,12 @@ async function sendQuestion() {
  }
  scrollToBottom();
  }
- catch {
+ catch (err) {
  const index = messages.value.findIndex(m => m.question === newQuestion && m.loading);
  if (index !== -1) {
  messages.value[index] = {
  question: newQuestion,
- answer: '抱歉，回答失败，请重试',
+ answer: err.userMessage || '抱歉，回答失败，请重试',
  sources: [],
  error: true
  };
