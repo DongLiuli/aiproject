@@ -137,6 +137,85 @@ class LLMClient:
             logger.exception(f"[LLM] Qwen调用异常: {str(e)}")
             return {"success": False, "error": f"Qwen调用失败: {str(e)}"}
     
+    def call_stream(self, prompt: str, system_prompt: str = ""):
+        """
+        流式调用 LLM API，逐块 yield 增量文本。
+
+        yield 的事件为 dict：
+          {"type": "delta", "content": "..."}  增量文本
+          {"type": "error", "error": "..."}    出错（yield 后即结束）
+
+        :param prompt: 用户提示
+        :param system_prompt: 系统提示
+        """
+        if not self.api_key:
+            yield {"type": "error", "error": "API Key 未配置"}
+            return
+
+        if self.provider == "deepseek":
+            url = "https://api.deepseek.com/v1/chat/completions"
+            model = "deepseek-chat"
+        elif self.provider == "qwen":
+            url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+            model = "qwen-turbo"
+        else:
+            yield {"type": "error", "error": f"不支持的 provider: {self.provider}"}
+            return
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "stream": True,
+        }
+
+        try:
+            with requests.post(url, headers=headers, json=data,
+                               timeout=self.timeout, stream=True) as response:
+                if response.status_code != 200:
+                    detail = response.text[:200] if response.text else ""
+                    yield {"type": "error", "error": f"API错误 {response.status_code}: {detail}"}
+                    return
+
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[len("data:"):].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = obj.get("choices")
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield {"type": "delta", "content": content}
+
+        except requests.exceptions.Timeout:
+            yield {"type": "error", "error": "请求超时"}
+        except requests.exceptions.ConnectionError:
+            yield {"type": "error", "error": "无法连接到 LLM 服务，请检查网络"}
+        except requests.exceptions.RequestException as e:
+            yield {"type": "error", "error": f"请求失败: {str(e)}"}
+        except Exception as e:
+            yield {"type": "error", "error": f"未知错误: {str(e)}"}
+
     def test_connection(self) -> Dict[str, Any]:
         """测试 API 连接"""
         test_prompt = "请简单回复 'OK' 表示连接正常"

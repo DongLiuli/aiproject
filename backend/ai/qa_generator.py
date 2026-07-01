@@ -94,6 +94,74 @@ def generate_answer(paper_id: str, question: str,
         return {"success": False, "error": f"生成答案失败: {str(e)}"}
 
 
+def generate_answer_stream(paper_id: str, question: str,
+                           conversation_history: Optional[List[Dict[str, Any]]] = None,
+                           llm_client: LLMClient = None,
+                           chunks_data: Optional[List[Dict[str, Any]]] = None):
+    """
+    流式生成论文问答答案。逐块 yield dict 事件：
+      {"type": "sources", "sources": [...]}   检索到的来源（在正文前先发）
+      {"type": "delta", "content": "..."}     答案增量
+      {"type": "error", "error": "..."}       出错
+    正文由调用方拼接，流结束由调用方负责落库。
+    """
+    if not llm_client:
+        yield {"type": "error", "error": "LLM 客户端未提供"}
+        return
+
+    if not question or not question.strip():
+        yield {"type": "error", "error": "问题不能为空"}
+        return
+
+    try:
+        if chunks_data is None:
+            try:
+                from app.models import get_db, Chunk
+                db = next(get_db())
+                chunks_data = db.query(Chunk).filter(
+                    Chunk.paper_id == paper_id
+                ).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+            except ImportError:
+                yield {"type": "error", "error": "无法连接数据库"}
+                return
+
+        if not chunks_data:
+            yield {"type": "error", "error": "论文尚未解析或无分块数据"}
+            return
+
+        trimmed_history = _trim_history(conversation_history) if conversation_history else []
+
+        if trimmed_history:
+            rewritten = _rewrite_question(question, trimmed_history, llm_client)
+            search_query = rewritten["rewritten_question"]
+        else:
+            search_query = question
+
+        chunks = search_chunks(
+            paper_id, search_query,
+            k=min(MAX_CONTEXT_CHUNKS, SEARCH_CONFIG["top_k"]),
+            chunks_data=chunks_data
+        )
+
+        if not chunks:
+            yield {"type": "sources", "sources": []}
+            yield {"type": "delta", "content": "未在论文中找到与该问题相关的内容。"}
+            return
+
+        yield {"type": "sources", "sources": _extract_sources(chunks)}
+
+        context_text = _build_context_text(chunks)
+        prompt = _build_qa_prompt(question, context_text, trimmed_history)
+
+        for evt in llm_client.call_stream(prompt):
+            yield evt
+            if evt.get("type") == "error":
+                return
+
+    except Exception as e:
+        yield {"type": "error", "error": f"生成答案失败: {str(e)}"}
+
+
 def _trim_history(conversation_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     裁剪对话历史，保留最近 N 轮（每轮 = user + assistant）

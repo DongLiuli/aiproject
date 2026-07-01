@@ -61,35 +61,36 @@ async function sendQuestion() {
  const newQuestion = question.value.trim();
  messages.value.push({
  question: newQuestion,
- answer: null,
+ answer: '',
  sources: [],
  loading: true
  });
+ const index = messages.value.length - 1;
  question.value = '';
  scrollToBottom();
  try {
- const response = await qaStore.askQuestion(props.paperId, newQuestion);
- const index = messages.value.findIndex(m => m.question === newQuestion && m.loading);
- if (index !== -1) {
- messages.value[index] = {
- question: newQuestion,
- answer: response.answer,
- sources: response.sources || [],
- timestamp: new Date().toISOString()
- };
- }
+ await qaStore.askQuestionStream(props.paperId, newQuestion, {
+ onSources: (sources) => {
+ messages.value[index].sources = sources;
+ },
+ onDelta: (fullAnswer) => {
+ // 首个增量到达即结束「正在思考」，逐字渲染
+ messages.value[index].loading = false;
+ messages.value[index].answer = fullAnswer;
+ scrollToBottom();
+ },
+ });
+ messages.value[index].loading = false;
+ messages.value[index].timestamp = new Date().toISOString();
  scrollToBottom();
  }
  catch (err) {
- const index = messages.value.findIndex(m => m.question === newQuestion && m.loading);
- if (index !== -1) {
  messages.value[index] = {
  question: newQuestion,
  answer: err.userMessage || '抱歉，回答失败，请重试',
  sources: [],
  error: true
  };
- }
  }
 }
 function formatDate(dateStr) {

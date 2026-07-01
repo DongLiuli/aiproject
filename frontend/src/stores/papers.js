@@ -222,6 +222,24 @@ export const useQAStore = defineStore('qa', () => {
       answering.value = false
     }
   }
+  async function askQuestionStream(paperId, question, callbacks = {}) {
+    answering.value = true
+    try {
+      const result = await qaAPI.askStream(paperId, question, callbacks)
+      if (!conversations.value[paperId]) {
+        conversations.value[paperId] = []
+      }
+      conversations.value[paperId].push({
+        question,
+        answer: result.answer,
+        sources: result.sources || [],
+        timestamp: new Date().toISOString(),
+      })
+      return result
+    } finally {
+      answering.value = false
+    }
+  }
   async function getConversationHistory(paperId) {
     try {
       const response = await qaAPI.getHistory(paperId)
@@ -239,6 +257,7 @@ export const useQAStore = defineStore('qa', () => {
     currentQuestion,
     answering,
     askQuestion,
+    askQuestionStream,
     getConversationHistory,
     clearConversation,
   }
@@ -261,6 +280,19 @@ export const useReportsStore = defineStore('reports', () => {
       generating.value = false
     }
   }
+  async function generateReportStream(paperId, reportType, callbacks = {}) {
+    generating.value = true
+    try {
+      const { content } = await reportsAPI.generateStream(paperId, reportType, callbacks)
+      if (!reports.value[paperId]) {
+        reports.value[paperId] = {}
+      }
+      reports.value[paperId][reportType] = content
+      return content
+    } finally {
+      generating.value = false
+    }
+  }
   function getReport(paperId, reportType) {
     return reports.value[paperId]?.[reportType]
   }
@@ -279,6 +311,7 @@ export const useReportsStore = defineStore('reports', () => {
     reports,
     generating,
     generateReport,
+    generateReportStream,
     getReport,
     getReports,
   }

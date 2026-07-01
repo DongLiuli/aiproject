@@ -190,6 +190,87 @@ def generate_report(paper_id: str, report_type: str, llm_client: LLMClient = Non
         return {"success": False, "error": f"生成报告失败: {str(e)}"}
 
 
+def generate_report_stream(paper_id: str, report_type: str, llm_client: LLMClient = None,
+                           paper_text: str = "", chunks_data: Optional[List[Dict[str, Any]]] = None):
+    """
+    流式生成研读报告。逐块 yield dict 事件：
+      {"type": "delta", "content": "..."}   报告增量
+      {"type": "error", "error": "..."}     出错
+    正文由调用方拼接，流结束由调用方负责落库。
+    """
+    if not llm_client:
+        yield {"type": "error", "error": "LLM 客户端未提供"}
+        return
+
+    mapped_type = REPORT_TYPE_MAPPING.get(report_type)
+    if not mapped_type:
+        yield {"type": "error", "error": f"无效的报告类型: {report_type}"}
+        return
+
+    try:
+        if chunks_data is None:
+            try:
+                from app.models import get_db, Chunk, PaperStructuredInfo
+                db = next(get_db())
+                chunks_data = db.query(Chunk).filter(
+                    Chunk.paper_id == paper_id
+                ).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+                if not paper_text:
+                    info = db.query(PaperStructuredInfo).filter(
+                        PaperStructuredInfo.paper_id == paper_id
+                    ).first()
+                    if info:
+                        paper_text = info.full_text or ""
+            except ImportError:
+                yield {"type": "error", "error": "无法连接数据库"}
+                return
+
+        if not chunks_data:
+            yield {"type": "error", "error": "论文尚未解析或无分块数据"}
+            return
+
+        lang = detect_language(paper_text)
+        queries = QUERY_TERMS[mapped_type]["zh"] + QUERY_TERMS[mapped_type]["en"] if lang == "zh" else QUERY_TERMS[mapped_type]["en"]
+        report_title = REPORT_TITLES[mapped_type]
+
+        all_chunks = []
+        seen_content = set()
+        for query in queries:
+            chunks = search_chunks(paper_id, query, k=SEARCH_CONFIG["top_k"], chunks_data=chunks_data)
+            for chunk in chunks:
+                if chunk["content"] not in seen_content:
+                    seen_content.add(chunk["content"])
+                    all_chunks.append(chunk)
+
+        if not all_chunks:
+            yield {"type": "error", "error": "未找到相关内容"}
+            return
+
+        all_chunks.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        max_context_length = 16000
+        context = ""
+        for chunk in all_chunks:
+            chunk_text = f"【第{chunk['page']}页 - {chunk['section_title']}】\n{chunk['content']}"
+            if len(context) + len(chunk_text) + 2 <= max_context_length:
+                if context:
+                    context += "\n\n"
+                context += chunk_text
+            else:
+                break
+
+        prompt = _build_report_prompt(context, mapped_type, report_title)
+
+        for evt in llm_client.call_stream(prompt):
+            yield evt
+            if evt.get("type") == "error":
+                return
+
+    except Exception as e:
+        logger.exception(f"[报告生成-流式] 生成报告失败: {str(e)}")
+        yield {"type": "error", "error": f"生成报告失败: {str(e)}"}
+
+
 def _build_report_prompt(context: str, report_type: str, report_title: str) -> str:
     """
     构建报告生成 Prompt

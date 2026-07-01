@@ -28,6 +28,8 @@ const reportsStore = useReportsStore()
 const activeTab = ref('structured')
 const generating = ref(false)
 const reportContent = ref('')
+const streamingContent = ref('')
+const reportError = ref('')
 const copied = ref(false)
 
 const reportTypes = [
@@ -116,6 +118,11 @@ const currentRendered = computed(() => {
   return marked(currentReportContent.value)
 })
 
+const streamingRendered = computed(() => {
+  if (!streamingContent.value) return ''
+  return marked(streamingContent.value)
+})
+
 async function copyContent(content) {
   if (!content) return
   try {
@@ -139,12 +146,16 @@ async function generateReport(type) {
 
   generating.value = true
   activeTab.value = type
+  reportError.value = ''
+  streamingContent.value = ''
   try {
-    const content = await reportsStore.generateReport(props.paperId, type)
-    reportContent.value = content
+    await reportsStore.generateReportStream(props.paperId, type, {
+      onDelta: (full) => {
+        streamingContent.value = full
+      },
+    })
   } catch (err) {
-    const errorMsg = err.userMessage || '报告生成失败，请重试'
-    reportContent.value = errorMsg
+    reportError.value = err.userMessage || '报告生成失败，请重试'
   } finally {
     generating.value = false
   }
@@ -152,6 +163,7 @@ async function generateReport(type) {
 
 function switchTab(type) {
   activeTab.value = type
+  reportError.value = ''
   if (type !== 'structured') {
     reportContent.value = currentReportContent.value
   }
@@ -233,9 +245,21 @@ onMounted(() => {
     </div>
 
     <div class="report-content">
-      <div v-if="generating" class="content-loading">
-        <Loader2 class="loading-icon" />
-        <span>正在生成报告...</span>
+      <div v-if="generating" class="content-body">
+        <div v-if="streamingContent" class="markdown-preview" v-html="streamingRendered"></div>
+        <div v-else class="content-loading">
+          <Loader2 class="loading-icon" />
+          <span>正在检索并生成…</span>
+        </div>
+      </div>
+
+      <div v-else-if="reportError && activeTab !== 'structured'" class="content-empty">
+        <FileText class="empty-icon" />
+        <p class="report-error-text">{{ reportError }}</p>
+        <button class="generate-btn" @click="generateReport(activeTab)">
+          <RefreshCw class="btn-icon" />
+          <span>重试</span>
+        </button>
       </div>
 
       <div v-else-if="activeTab === 'structured'" class="structured-content">
@@ -269,6 +293,11 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.report-error-text {
+  color: #ef4444;
+  margin-bottom: 16px;
+}
+
 .report-container {
   display: flex;
   flex-direction: column;

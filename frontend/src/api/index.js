@@ -114,9 +114,96 @@ export const papersAPI = {
   },
 }
 
+/**
+ * 通用 SSE 流式请求：用原生 fetch 读取 ReadableStream，逐个解析 `data: {json}` 事件。
+ * axios 不适合读流，故单独实现，并手动带上鉴权头（参照 downloadPdf）。
+ * @param {string} path 接口路径（相对 API_BASE_URL）
+ * @param {object} body 请求体
+ * @param {(evt:object)=>void} onEvent 每个 SSE 事件回调
+ */
+async function streamSSE(path, body, onEvent) {
+  const headers = { 'Content-Type': 'application/json' }
+  const token = localStorage.getItem('token')
+  const sessionId = localStorage.getItem('session_id')
+  if (token) headers.Authorization = `Bearer ${token}`
+  else if (sessionId) headers['X-Session-ID'] = sessionId
+
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  })
+
+  // 开流前的错误（校验失败等）仍是标准 JSON 结构，解析出可读消息
+  if (!res.ok || !res.body) {
+    let msg = '请求失败，请重试'
+    try {
+      const data = await res.json()
+      msg = data?.detail?.error?.message || (typeof data?.detail === 'string' ? data.detail : '') || msg
+    } catch {
+      /* 忽略解析失败，用默认文案 */
+    }
+    const err = new Error(msg)
+    err.userMessage = msg
+    throw err
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let sep
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const chunk = buffer.slice(0, sep).trim()
+      buffer = buffer.slice(sep + 2)
+      if (!chunk.startsWith('data:')) continue
+      const payload = chunk.slice(5).trim()
+      if (!payload) continue
+      try {
+        onEvent(JSON.parse(payload))
+      } catch {
+        /* 忽略单条解析失败 */
+      }
+    }
+  }
+}
+
 export const qaAPI = {
   ask(paperId, question, conversationId = null) {
     return api.post(`/api/qa/${paperId}`, { question, conversation_id: conversationId })
+  },
+
+  /**
+   * 流式提问。onSources 收到来源，onDelta 收到累积答案文本。
+   * 返回 { answer, sources, conversation_id }；出错抛带 userMessage 的 Error。
+   */
+  async askStream(paperId, question, { conversationId = null, onSources, onDelta } = {}) {
+    let answer = ''
+    let sources = []
+    let conversationIdOut = null
+    let streamError = null
+    await streamSSE(`/api/qa/${paperId}/stream`, { question, conversation_id: conversationId }, (evt) => {
+      if (evt.type === 'sources') {
+        sources = evt.sources || []
+        onSources?.(sources)
+      } else if (evt.type === 'delta') {
+        answer += evt.content || ''
+        onDelta?.(answer)
+      } else if (evt.type === 'done') {
+        conversationIdOut = evt.conversation_id || null
+      } else if (evt.type === 'error') {
+        streamError = evt.message || '回答失败，请重试'
+      }
+    })
+    if (streamError) {
+      const err = new Error(streamError)
+      err.userMessage = streamError
+      throw err
+    }
+    return { answer, sources, conversation_id: conversationIdOut }
   },
 
   getHistory(paperId) {
@@ -127,6 +214,29 @@ export const qaAPI = {
 export const reportsAPI = {
   generate(paperId, reportType) {
     return api.post(`/api/reports/${paperId}`, { report_type: reportType })
+  },
+
+  /**
+   * 流式生成报告。onDelta 收到累积报告文本。
+   * 返回 { content }；出错抛带 userMessage 的 Error。
+   */
+  async generateStream(paperId, reportType, { onDelta } = {}) {
+    let content = ''
+    let streamError = null
+    await streamSSE(`/api/reports/${paperId}/stream`, { report_type: reportType }, (evt) => {
+      if (evt.type === 'delta') {
+        content += evt.content || ''
+        onDelta?.(content)
+      } else if (evt.type === 'error') {
+        streamError = evt.message || '报告生成失败，请重试'
+      }
+    })
+    if (streamError) {
+      const err = new Error(streamError)
+      err.userMessage = streamError
+      throw err
+    }
+    return { content }
   },
 
   getReports(paperId) {
