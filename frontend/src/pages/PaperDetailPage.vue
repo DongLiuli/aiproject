@@ -123,7 +123,12 @@ const formatSize = (bytes) => {
             </button>
           </div>
 
-          <QAInterface v-show="rightTab === 'qa'" class="pane-body" :paper-id="paperId" />
+          <QAInterface
+            v-show="rightTab === 'qa'"
+            class="pane-body"
+            :paper-id="paperId"
+            :parse-status="paper.parse_status"
+          />
           <ReportPanel
             v-show="rightTab === 'report'"
             class="pane-body"

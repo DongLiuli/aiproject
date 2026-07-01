@@ -76,7 +76,11 @@ async function handleMergeConfirm(shouldMerge) {
     try {
       await authStore.confirmMerge(mergeData.value.oldSessionId)
     } catch (e) {
+      // 合并失败不再静默：登录已成功，但游客数据未迁移，需明确告知
       console.error('合并失败:', e)
+      await papersStore.fetchPapers()
+      error.value = `登录成功，但游客数据合并失败：${e.userMessage || '请稍后在设置中重试'}`
+      return
     }
   }
   await papersStore.fetchPapers()

@@ -1,51 +1,74 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { usePapersStore } from '@/stores/papers'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
 import { FileText, Search, Filter, Upload, BookOpen } from 'lucide-vue-next'
 import PaperCard from '@/components/PaperCard.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+const router = useRouter()
 const papersStore = usePapersStore()
 const authStore = useAuthStore()
 const uiStore = useUIStore()
 const searchQuery = ref('')
 const showFilters = ref(false)
-const filteredPapers = ref([])
+
+// 确认/提示弹窗（替代原生 confirm/alert）；cancelText 为空即「仅确定」的提示模式
+const dialog = ref(null)
+function openDialog(opts) {
+  dialog.value = opts
+}
+function closeDialog() {
+  dialog.value = null
+}
+function handleDialogConfirm() {
+  const fn = dialog.value?.onConfirm
+  closeDialog()
+  if (fn) fn()
+}
+
 onMounted(async () => {
   await authStore.initialize()
   await papersStore.fetchPapers()
 })
-function filterPapers() {
-  if (!searchQuery.value) {
-    filteredPapers.value = papersStore.papers
-    return
-  }
-  const query = searchQuery.value.toLowerCase()
-  filteredPapers.value = papersStore.papers.filter((paper) => {
-    const title = paper.title?.toLowerCase() || paper.file_name?.toLowerCase() || ''
-    const authors = (Array.isArray(paper.authors)
-      ? paper.authors.join(' ')
-      : paper.authors || ''
-    ).toLowerCase()
-    return title.includes(query) || authors.includes(query)
+
+// 搜索走后端 keyword（防抖 300ms），不再只搜当前页
+let searchTimer = null
+watch(searchQuery, (val) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    const kw = val.trim()
+    papersStore.fetchPapers(kw ? { keyword: kw } : undefined)
+  }, 300)
+})
+
+function handleViewPaper(paper) {
+  router.push(`/papers/${paper.paper_id}`)
+}
+
+function handleDeletePaper(paperId) {
+  openDialog({
+    title: '删除论文',
+    message: '确定要删除这篇论文吗？此操作不可撤销。',
+    confirmText: '删除',
+    cancelText: '取消',
+    danger: true,
+    onConfirm: async () => {
+      try {
+        await papersStore.deletePaper(paperId)
+      } catch (err) {
+        openDialog({ title: '删除失败', message: err.userMessage || '删除失败，请重试', cancelText: '' })
+      }
+    },
   })
 }
-async function handleViewPaper(paper) {
-  window.location.href = `/papers/${paper.paper_id}`
-}
-async function handleDeletePaper(paperId) {
-  if (!confirm('确定要删除这篇论文吗？')) return
-  try {
-    await papersStore.deletePaper(paperId)
-  } catch (_err) {
-    alert('删除失败，请重试')
-  }
-}
+
 async function handleReparse(paperId) {
   try {
     await papersStore.reparsePaper(paperId)
-  } catch (_err) {
-    alert('重新解析失败，请重试')
+  } catch (err) {
+    openDialog({ title: '操作失败', message: err.userMessage || '重新解析失败，请重试', cancelText: '' })
   }
 }
 </script>
@@ -73,8 +96,7 @@ async function handleReparse(paperId) {
           type="text"
           v-model="searchQuery"
           class="search-input"
-          placeholder="搜索论文标题或作者..."
-          @input="filterPapers"
+          placeholder="搜索论文标题或文件名..."
         />
       </div>
 
@@ -87,6 +109,14 @@ async function handleReparse(paperId) {
     <div v-if="papersStore.loading" class="loading-state">
       <div class="loading-spinner"></div>
       <p>加载中...</p>
+    </div>
+
+    <div v-else-if="papersStore.papers.length === 0 && searchQuery" class="empty-state">
+      <div class="empty-icon">
+        <Search class="icon" />
+      </div>
+      <h2>未找到匹配的论文</h2>
+      <p>换个关键词试试</p>
     </div>
 
     <div v-else-if="papersStore.papers.length === 0" class="empty-state">
@@ -103,7 +133,7 @@ async function handleReparse(paperId) {
 
     <div v-else class="papers-grid">
       <PaperCard
-        v-for="paper in filteredPapers.length > 0 ? filteredPapers : papersStore.papers"
+        v-for="paper in papersStore.papers"
         :key="paper.paper_id"
         :paper="paper"
         @view="handleViewPaper"
@@ -112,9 +142,20 @@ async function handleReparse(paperId) {
       />
     </div>
 
-    <div v-if="filteredPapers.length > 0 && searchQuery" class="search-results">
-      找到 {{ filteredPapers.length }} 篇匹配的论文
+    <div v-if="searchQuery && papersStore.papers.length > 0" class="search-results">
+      找到 {{ papersStore.papers.length }} 篇匹配的论文
     </div>
+
+    <ConfirmModal
+      v-if="dialog"
+      :title="dialog.title"
+      :message="dialog.message"
+      :confirm-text="dialog.confirmText || '确定'"
+      :cancel-text="dialog.cancelText ?? '取消'"
+      :danger="dialog.danger || false"
+      @confirm="handleDialogConfirm"
+      @cancel="closeDialog"
+    />
   </div>
 </template>
 

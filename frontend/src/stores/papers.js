@@ -84,10 +84,10 @@ export const usePapersStore = defineStore('papers', () => {
     return null
   }
 
-  async function fetchPapers() {
+  async function fetchPapers(params) {
     loading.value = true
     try {
-      const response = await papersAPI.list()
+      const response = await papersAPI.list(params)
       papers.value = response.items || response
     } catch (error) {
       console.error('Failed to fetch papers:', error)

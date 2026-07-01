@@ -1,12 +1,17 @@
-<script setup>import { ref, watch, nextTick } from 'vue';
+<script setup>import { ref, watch, nextTick, computed } from 'vue';
 import { useQAStore } from '@/stores/papers';
 import { Send, Loader2, MessageSquare, FileText } from 'lucide-vue-next';
 const props = defineProps({
  paperId: {
  type: String,
  required: true
+ },
+ parseStatus: {
+ type: String,
+ default: ''
  }
 });
+const canAsk = computed(() => props.parseStatus === 'completed');
 const qaStore = useQAStore();
 const question = ref('');
 const messages = ref([]);
@@ -56,7 +61,7 @@ async function loadHistory() {
  }
 }
 async function sendQuestion() {
- if (!question.value.trim() || qaStore.answering)
+ if (!question.value.trim() || qaStore.answering || !canAsk.value)
  return;
  const newQuestion = question.value.trim();
  messages.value.push({
@@ -155,18 +160,21 @@ function formatDate(dateStr) {
       </div>
     </div>
     
+    <div v-if="!canAsk" class="qa-locked-hint">
+      论文解析完成后即可提问
+    </div>
     <div class="qa-input-area">
-      <input 
-        type="text" 
+      <input
+        type="text"
         v-model="question"
         class="qa-input"
-        placeholder="输入您的问题..."
+        :placeholder="canAsk ? '输入您的问题...' : '论文解析完成后即可提问'"
         @keyup.enter="sendQuestion"
-        :disabled="qaStore.answering"
+        :disabled="qaStore.answering || !canAsk"
       />
-      <button 
+      <button
         class="send-btn"
-        :disabled="!question.trim() || qaStore.answering"
+        :disabled="!question.trim() || qaStore.answering || !canAsk"
         @click="sendQuestion"
       >
         <Send class="send-icon" />
@@ -345,6 +353,14 @@ function formatDate(dateStr) {
   font-size: 0.8125rem;
   color: #999;
   line-height: 1.6;
+}
+
+.qa-locked-hint {
+  padding: 10px 20px;
+  font-size: 0.8125rem;
+  color: #d97706;
+  background: #fef3c7;
+  text-align: center;
 }
 
 .qa-input-area {

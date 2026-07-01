@@ -92,7 +92,10 @@ const formatSize = (bytes) => {
     </div>
 
     <div v-if="paper.parse_status === 'failed' && paper.parse_error" class="parse-error">
-      {{ paper.parse_error }}
+      <div class="parse-error-msg">{{ paper.parse_error }}</div>
+      <div class="parse-error-hint">
+        可点击下方「↻」重新解析；若提示未配置 API Key，请先到「设置」填写后再试。
+      </div>
     </div>
 
     <div class="card-footer">
@@ -232,12 +235,21 @@ const formatSize = (bytes) => {
 
 .parse-error {
   font-size: 0.875rem;
-  color: #dc2626;
   background: #fef2f2;
   padding: 10px 12px;
   border-radius: 8px;
   margin-bottom: 16px;
   border-left: 3px solid #dc2626;
+}
+
+.parse-error-msg {
+  color: #dc2626;
+}
+
+.parse-error-hint {
+  margin-top: 6px;
+  font-size: 0.8125rem;
+  color: #b45309;
 }
 
 .card-footer {
