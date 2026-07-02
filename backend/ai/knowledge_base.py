@@ -172,15 +172,77 @@ def delete_index(paper_id: str) -> Dict[str, Any]:
         return {"success": False, "error": "索引文件不存在"}
 
 
+# 混合检索依赖是否可用（jieba + rank_bm25），首次检查后缓存
+_hybrid_deps_available = None
+
+
+def _check_hybrid_deps() -> bool:
+    """检查混合检索依赖（jieba/rank_bm25）是否可用；缺失则回退纯向量。"""
+    global _hybrid_deps_available
+    if _hybrid_deps_available is None:
+        try:
+            import jieba  # noqa: F401
+            from rank_bm25 import BM25Okapi  # noqa: F401
+            _hybrid_deps_available = True
+        except Exception as e:
+            logging.warning(f"[混合检索] jieba/rank_bm25 不可用，回退纯向量检索: {e}")
+            _hybrid_deps_available = False
+    return _hybrid_deps_available
+
+
+def _tokenize(text: str) -> List[str]:
+    """中文分词（jieba），供 BM25 关键词打分使用。"""
+    import jieba
+    return [t for t in jieba.lcut(text or "") if t.strip()]
+
+
+def _rrf_fuse(rankings: List[List[int]], rrf_k: int) -> List[tuple]:
+    """
+    RRF（Reciprocal Rank Fusion）融合多路排名。
+
+    :param rankings: 每一路是一个按相关度降序排列的 chunk 下标列表
+    :param rrf_k: RRF 常数（经验值 60），越大越弱化排名差异
+    :return: [(idx, fused_score), ...]，按融合分降序
+    """
+    scores: Dict[int, float] = {}
+    for ranking in rankings:
+        for rank, idx in enumerate(ranking):
+            scores[idx] = scores.get(idx, 0.0) + 1.0 / (rrf_k + rank)
+    return sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+
+def _normalize_chunks(chunks_data: List[Any]) -> List[Dict[str, Any]]:
+    """把 ORM 对象或 dict 形式的分块统一成 {content, section_title, page}。"""
+    chunks = []
+    for chunk in chunks_data:
+        if hasattr(chunk, 'content'):
+            chunks.append({
+                "content": chunk.content,
+                "section_title": chunk.section_title,
+                "page": chunk.page_number
+            })
+        elif isinstance(chunk, dict):
+            chunks.append({
+                "content": chunk.get("content", ""),
+                "section_title": chunk.get("section_title", ""),
+                "page": chunk.get("page_number", 0)
+            })
+    return chunks
+
+
 def search_chunks(paper_id: str, query: str, k: int = 5, chunks_data: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
-    检索相关分块
+    检索相关分块（向量 + BM25 混合检索，RRF 融合）。
+
+    - use_hybrid=True 时：FAISS 向量召回 + BM25 关键词召回，用 RRF 融合排名。
+    - use_hybrid=False 或依赖缺失时：自动回退到纯向量检索，行为与旧版一致。
+    函数签名保持不变，QA/报告等调用方无需改动。
 
     :param paper_id: 论文 ID
     :param query: 查询文本
     :param k: 返回条数
     :param chunks_data: 分块数据（必须，外部传入以解耦数据库依赖）
-    :return: 检索结果列表
+    :return: 检索结果列表，每条含 content/section_title/page/score
     """
     index_path = os.path.join(VECTOR_DIR, f"{paper_id}.index")
 
@@ -194,45 +256,58 @@ def search_chunks(paper_id: str, query: str, k: int = 5, chunks_data: List[Dict[
 
     try:
         model = KnowledgeBase.get_model()
-
-        # 加载索引
         index = faiss.read_index(index_path)
 
-        # 向量化查询
+        # 准备 chunks 列表，下标需与 FAISS 索引顺序一致
+        chunks = _normalize_chunks(chunks_data)
+        if not chunks:
+            return []
+
+        n = len(chunks)
+        # 候选池：先召回更多候选再融合/截断（修复旧版把 k 压到 top_k 的问题）
+        fetch_k = max(k, SEARCH_CONFIG.get("fetch_k", 20))
+        fetch_k = min(fetch_k, n, index.ntotal)
+
+        # ---- 向量通道 ----
         query_embedding = model.encode([query])
+        distances, indices = index.search(np.array(query_embedding), fetch_k)
+        vec_ranking = [int(idx) for idx in indices[0] if 0 <= idx < n]
+        vec_scores: Dict[int, float] = {}
+        for i, idx in enumerate(indices[0]):
+            if 0 <= idx < n:
+                vec_scores[int(idx)] = float(1 - distances[0][i] / 2)
 
-        # 搜索
-        k = min(k, SEARCH_CONFIG["top_k"])
-        distances, indices = index.search(np.array(query_embedding), k)
+        use_hybrid = SEARCH_CONFIG.get("use_hybrid", True) and _check_hybrid_deps()
 
-        # 准备chunks列表，确保顺序正确
-        chunks = []
-        for chunk in chunks_data:
-            if hasattr(chunk, 'content'):
-                chunks.append({
-                    "content": chunk.content,
-                    "section_title": chunk.section_title,
-                    "page": chunk.page_number
-                })
-            elif isinstance(chunk, dict):
-                chunks.append({
-                    "content": chunk.get("content", ""),
-                    "section_title": chunk.get("section_title", ""),
-                    "page": chunk.get("page_number", 0)
-                })
+        if use_hybrid:
+            # ---- BM25 关键词通道 ----
+            from rank_bm25 import BM25Okapi
+            tokenized_corpus = [_tokenize(c["content"]) for c in chunks]
+            bm25 = BM25Okapi(tokenized_corpus)
+            bm25_scores = bm25.get_scores(_tokenize(query))
+            bm25_ranking = sorted(range(n), key=lambda i: bm25_scores[i], reverse=True)[:fetch_k]
+
+            # ---- RRF 融合 ----
+            fused = _rrf_fuse([vec_ranking, bm25_ranking], SEARCH_CONFIG.get("rrf_k", 60))
+            ordered = [idx for idx, _ in fused[:k]]
+            score_map = {idx: s for idx, s in fused}
+            mode = "hybrid"
+        else:
+            ordered = vec_ranking[:k]
+            score_map = vec_scores
+            mode = "vector"
 
         results = []
-        for i, idx in enumerate(indices[0]):
-            if idx >= 0 and idx < len(chunks):
-                chunk = chunks[idx]
-                results.append({
-                    "content": chunk["content"],
-                    "section_title": chunk["section_title"],
-                    "page": chunk["page"],
-                    "score": float(1 - distances[0][i] / 2)
-                })
+        for idx in ordered:
+            chunk = chunks[idx]
+            results.append({
+                "content": chunk["content"],
+                "section_title": chunk["section_title"],
+                "page": chunk["page"],
+                "score": float(score_map.get(idx, 0.0))
+            })
 
-        logging.info(f"search_chunks: 检索到 {len(results)} 条结果 - {paper_id}, query={query[:20]}")
+        logging.info(f"search_chunks[{mode}]: 检索到 {len(results)} 条结果 - {paper_id}, query={query[:20]}")
         return results
 
     except Exception as e:

@@ -28,7 +28,12 @@ CHUNK_CONFIG = {
 # 检索配置
 SEARCH_CONFIG = {
     "top_k": 5,
-    "score_threshold": 0.5
+    "score_threshold": 0.5,
+    "use_hybrid": True,     # 混合检索总开关（关闭则回退纯向量，可做消融对比）
+    "use_rerank": False,    # cross-encoder 重排开关（档位2，本期占位不接模型）
+    "rerank_top_n": 10,     # 重排候选数（use_rerank 时生效）
+    "rrf_k": 60,            # RRF 融合常数，经验值 60
+    "fetch_k": 20,          # 每路（向量/BM25）召回的候选池大小
 }
 
 # 路径配置

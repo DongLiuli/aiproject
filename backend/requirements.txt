@@ -14,6 +14,8 @@ pytest>=7.0.0
 # AI 管道依赖
 pdfplumber>=0.11.0
 faiss-cpu>=1.7.0
+rank_bm25>=0.2.2
+jieba>=0.42.1
 langchain>=0.1.0
 requests>=2.31.0
 pycryptodome>=3.20.0

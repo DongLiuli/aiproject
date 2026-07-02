@@ -97,8 +97,8 @@ The core flow lives in `backend/app/api/papers.py:_run_parse_pipeline()`:
 
 1. **PDF Parsing** (`ai/pdf_parser.py`): PyMuPDF-based extraction. Handles dual-column layout, section detection via regex, figure/table detection, header/footer filtering. Returns `{full_text, sections, figures_tables}`.
 2. **Structured Extraction** (`ai/info_extractor.py`): Sends first 5000 chars of text + section summary to LLM, expects JSON response with research background, questions, method, innovations, limitations, etc.
-3. **Knowledge Base** (`ai/knowledge_base.py`): Chunks text (600 chars, 100 overlap), encodes with `BAAI/bge-large-zh-v1.5` via `sentence-transformers`, indexes with FAISS L2 distance. Index saved to `data/vectors/{paper_id}.index`. Chunks stored in DB for retrieval.
-4. **QA** (`ai/qa_generator.py`): Multi-turn with question rewriting. Retrieves top-k chunks via FAISS, builds context prompt, calls LLM.
+3. **Knowledge Base** (`ai/knowledge_base.py`): Chunks text (600 chars, 100 overlap), encodes with `BAAI/bge-large-zh-v1.5` via `sentence-transformers`, indexes with FAISS L2 distance. Index saved to `data/vectors/{paper_id}.index`. Chunks stored in DB for retrieval. **Hybrid retrieval (功能 B)**: `search_chunks()` fuses FAISS vector ranking with a `rank_bm25` BM25 keyword ranking (jieba-tokenized) via **RRF (Reciprocal Rank Fusion)**. Controlled by `SEARCH_CONFIG` in `ai/config.py` — `use_hybrid` (default true; false = pure-vector fallback for ablation), `fetch_k` (per-channel candidate pool), `rrf_k` (fusion constant), plus a `use_rerank` placeholder switch for a future cross-encoder (档位 2, not wired). The function signature is unchanged, so QA/report callers need no edits; if `jieba`/`rank_bm25` are missing it degrades to pure vector. Ablation harness: `backend/eval_hybrid.py`.
+4. **QA** (`ai/qa_generator.py`): Multi-turn with question rewriting. Retrieves top-k chunks via `search_chunks()` (hybrid vector+BM25, see step 3), builds context prompt, calls LLM.
 5. **Reports** (`ai/report_generator.py`): `quick`/`method`/`experiment` types. Queries knowledge base with bilingual terms depending on paper language detection.
 
 ### LLM Integration
