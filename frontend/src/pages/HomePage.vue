@@ -1,10 +1,10 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePapersStore } from '@/stores/papers'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
-import { FileText, Search, Filter, Upload, BookOpen } from 'lucide-vue-next'
+import { FileText, Search, Filter, Upload, BookOpen, GitCompare, X } from 'lucide-vue-next'
 import PaperCard from '@/components/PaperCard.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 const router = useRouter()
@@ -71,6 +71,50 @@ async function handleReparse(paperId) {
     openDialog({ title: '操作失败', message: err.userMessage || '重新解析失败，请重试', cancelText: '' })
   }
 }
+
+// ==================== 跨论文对比（功能 A） ====================
+const compareMode = ref(false)
+const selectedIds = ref([])
+const compareView = ref('overall')
+const viewOptions = [
+  { value: 'overall', label: '综合对比' },
+  { value: 'method', label: '方法对比' },
+  { value: 'experiment', label: '实验对比' },
+]
+
+const completedCount = computed(
+  () => papersStore.papers.filter((p) => p.parse_status === 'completed').length,
+)
+
+function toggleCompareMode() {
+  compareMode.value = !compareMode.value
+  if (!compareMode.value) selectedIds.value = []
+}
+
+function handleToggleSelect(paper) {
+  const id = paper.paper_id
+  const idx = selectedIds.value.indexOf(id)
+  if (idx !== -1) {
+    selectedIds.value.splice(idx, 1)
+  } else {
+    if (selectedIds.value.length >= 5) {
+      openDialog({ title: '数量超限', message: '最多选择 5 篇论文进行对比', cancelText: '' })
+      return
+    }
+    selectedIds.value.push(id)
+  }
+}
+
+function startCompare() {
+  if (selectedIds.value.length < 2) {
+    openDialog({ title: '选择不足', message: '请至少选择 2 篇论文进行对比', cancelText: '' })
+    return
+  }
+  router.push({
+    name: 'compare',
+    query: { ids: selectedIds.value.join(','), view: compareView.value },
+  })
+}
 </script>
 
 <template>
@@ -104,6 +148,21 @@ async function handleReparse(paperId) {
         <Filter class="filter-icon" />
         <span>筛选</span>
       </button>
+
+      <button
+        class="filter-btn compare-toggle"
+        :class="{ active: compareMode }"
+        @click="toggleCompareMode"
+        :disabled="completedCount < 2"
+        :title="completedCount < 2 ? '至少需要 2 篇已解析论文' : ''"
+      >
+        <GitCompare class="filter-icon" />
+        <span>{{ compareMode ? '退出对比' : '对比' }}</span>
+      </button>
+    </div>
+
+    <div v-if="compareMode" class="compare-hint">
+      对比模式：勾选 2~5 篇已解析论文，然后点击底部「开始对比」
     </div>
 
     <div v-if="papersStore.loading" class="loading-state">
@@ -136,10 +195,33 @@ async function handleReparse(paperId) {
         v-for="paper in papersStore.papers"
         :key="paper.paper_id"
         :paper="paper"
+        :selectable="compareMode"
+        :selected="selectedIds.includes(paper.paper_id)"
         @view="handleViewPaper"
         @delete="handleDeletePaper"
         @reparse="handleReparse"
+        @toggle-select="handleToggleSelect"
       />
+    </div>
+
+    <div v-if="compareMode" class="compare-bar">
+      <div class="compare-bar-info">
+        <GitCompare class="compare-bar-icon" />
+        <span>已选 <strong>{{ selectedIds.length }}</strong> / 5 篇</span>
+      </div>
+      <div class="compare-bar-actions">
+        <select v-model="compareView" class="compare-view-select">
+          <option v-for="opt in viewOptions" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+          </option>
+        </select>
+        <button class="compare-start-btn" :disabled="selectedIds.length < 2" @click="startCompare">
+          开始对比
+        </button>
+        <button class="compare-close-btn" @click="toggleCompareMode" title="退出对比">
+          <X class="compare-close-icon" />
+        </button>
+      </div>
     </div>
 
     <div v-if="searchQuery && papersStore.papers.length > 0" class="search-results">
@@ -256,6 +338,113 @@ async function handleReparse(paperId) {
 
 .filter-btn:hover {
   background: #f5f5f5;
+}
+
+.filter-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.compare-toggle.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-color: transparent;
+}
+
+.compare-hint {
+  margin-bottom: 16px;
+  padding: 10px 16px;
+  background: #eef2ff;
+  color: #4f46e5;
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.compare-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 20px;
+  background: white;
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+}
+
+.compare-bar-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #333;
+  font-size: 0.9375rem;
+}
+
+.compare-bar-info strong {
+  color: #667eea;
+}
+
+.compare-bar-icon {
+  width: 18px;
+  height: 18px;
+  color: #667eea;
+}
+
+.compare-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.compare-view-select {
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  outline: none;
+}
+
+.compare-start-btn {
+  padding: 8px 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.compare-start-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.compare-close-btn {
+  width: 36px;
+  height: 36px;
+  background: #f5f5f5;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.compare-close-btn:hover {
+  background: #e0e0e0;
+}
+
+.compare-close-icon {
+  width: 18px;
+  height: 18px;
+  color: #666;
 }
 
 .filter-icon {

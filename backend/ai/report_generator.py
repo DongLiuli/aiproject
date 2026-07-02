@@ -271,6 +271,197 @@ def generate_report_stream(paper_id: str, report_type: str, llm_client: LLMClien
         yield {"type": "error", "error": f"生成报告失败: {str(e)}"}
 
 
+# ==================== 跨论文对比（功能 A） ====================
+
+# 对比维度：key -> (展示标签, PaperStructuredInfo.to_dict 字段名)
+COMPARISON_DIMENSIONS = {
+    "research_questions": ("研究问题", "research_questions"),
+    "method_flow": ("方法流程", "method_flow"),
+    "model_algorithm": ("模型/算法", "model_algorithm"),
+    "dataset_info": ("数据集", "dataset_info"),
+    "evaluation_metrics": ("评估指标", "evaluation_metrics"),
+    "experiment_results": ("实验结果", "experiment_results"),
+    "innovations": ("创新点", "innovations"),
+    "limitations": ("局限", "limitations"),
+}
+
+# 三种视角 -> 展示哪些维度（顺序即表格行顺序）
+COMPARISON_VIEWS = {
+    "overall": ["research_questions", "method_flow", "model_algorithm",
+                "dataset_info", "evaluation_metrics", "innovations", "limitations"],
+    "method": ["research_questions", "method_flow", "model_algorithm", "innovations"],
+    "experiment": ["dataset_info", "evaluation_metrics", "experiment_results", "limitations"],
+}
+
+COMPARISON_VIEW_TITLES = {
+    "overall": "综合对比",
+    "method": "方法对比",
+    "experiment": "实验对比",
+}
+
+# 综述检索：各视角的检索查询词（少而精，控制 embedding 次数：≤3 条/篇）
+COMPARISON_QUERIES = {
+    "overall": ["研究方法 模型 框架 贡献", "实验结果 数据集 评估指标", "method results dataset contribution"],
+    "method": ["方法 模型架构 算法 实现细节", "method model architecture algorithm implementation"],
+    "experiment": ["实验结果 数据集 评估指标 对比 消融", "experiment results dataset metrics benchmark ablation"],
+}
+
+# 综述上下文预算：跨所有论文的检索证据总字符数，按篇数均摊（论文越多每篇越少，总量恒定）
+COMPARISON_MAX_CONTEXT = 12000
+# prompt 中单个结构化字段的截断长度（避免个别超长字段挤爆上下文）
+COMPARISON_FIELD_MAXLEN = 220
+
+
+def _stringify_field(value: Any) -> str:
+    """把结构化字段值规整成一段可读文本（表格单元 / prompt 用）。"""
+    if value is None:
+        return "—"
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, dict):
+                # 取 name/title/text 之类的可读键，否则整体序列化
+                readable = item.get("name") or item.get("title") or item.get("text") or item.get("description")
+                parts.append(str(readable) if readable else "；".join(f"{k}:{v}" for k, v in item.items()))
+            else:
+                parts.append(str(item))
+        text = "；".join(p for p in parts if p and p.strip())
+        return text if text.strip() else "—"
+    if isinstance(value, dict):
+        text = "；".join(f"{k}: {v}" for k, v in value.items())
+        return text if text.strip() else "—"
+    text = str(value).strip()
+    return text if text else "—"
+
+
+def build_comparison_table(papers_info: List[Dict[str, Any]], view: str = "overall") -> Dict[str, Any]:
+    """
+    组装对比表格数据（纯 DB 数据，无需 LLM）。
+
+    :param papers_info: [{"paper_id": str, "title": str, "info": dict(to_dict 结果)}...]
+    :param view: overall / method / experiment
+    :return: {"view", "view_title", "papers": [{paper_id,title}], "rows": [{key,label,values:[...]}]}
+    """
+    if view not in COMPARISON_VIEWS:
+        view = "overall"
+
+    dim_keys = COMPARISON_VIEWS[view]
+    papers_header = [{"paper_id": p["paper_id"], "title": p.get("title") or "（无标题）"} for p in papers_info]
+
+    rows = []
+    for key in dim_keys:
+        label, field = COMPARISON_DIMENSIONS[key]
+        values = [_stringify_field((p.get("info") or {}).get(field)) for p in papers_info]
+        rows.append({"key": key, "label": label, "values": values})
+
+    return {
+        "view": view,
+        "view_title": COMPARISON_VIEW_TITLES[view],
+        "papers": papers_header,
+        "rows": rows,
+    }
+
+
+def _retrieve_evidence(paper_id: str, view: str, chunks_data: Optional[List[Any]], char_budget: int) -> str:
+    """
+    按视角在单篇论文的全文分块中检索最相关的原文片段，拼接到 char_budget 以内。
+    覆盖全篇（chunks 对整篇切分），突破结构化抽取仅取前 5000 字的天花板。
+    检索不可用（无索引/无分块/依赖缺失）时返回空串，调用方自动降级为结构化字段。
+    """
+    if not chunks_data or char_budget <= 0:
+        return ""
+    queries = COMPARISON_QUERIES.get(view, COMPARISON_QUERIES["overall"])
+    try:
+        all_chunks = []
+        seen = set()
+        for q in queries:
+            for ch in search_chunks(paper_id, q, k=SEARCH_CONFIG["top_k"], chunks_data=chunks_data):
+                content = ch.get("content", "")
+                if content and content not in seen:
+                    seen.add(content)
+                    all_chunks.append(ch)
+        all_chunks.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        text = ""
+        for ch in all_chunks:
+            piece = f"【第{ch.get('page')}页 - {ch.get('section_title')}】\n{ch.get('content', '')}"
+            if len(text) + len(piece) + 2 > char_budget:
+                break
+            text = piece if not text else text + "\n\n" + piece
+        return text
+    except Exception as e:
+        logger.warning(f"[对比] 证据检索失败，降级为结构化字段 - {paper_id}: {e}")
+        return ""
+
+
+def _build_comparison_prompt(papers_info: List[Dict[str, Any]], view: str) -> str:
+    """构建对比综述 Prompt：结构化要点（对齐维度）+ 全篇检索原文片段（证据）。缺模板时用内置默认模板。"""
+    if view not in COMPARISON_VIEWS:
+        view = "overall"
+    dim_keys = COMPARISON_VIEWS[view]
+
+    # 证据预算按篇均摊，篇数越多每篇越少，总量恒定（封顶 token）
+    n = max(1, len(papers_info))
+    per_paper_budget = max(1500, COMPARISON_MAX_CONTEXT // n)
+
+    blocks = []
+    for idx, p in enumerate(papers_info):
+        info = p.get("info") or {}
+        label = chr(ord("A") + idx)
+        lines = [f"### 论文{label}：{p.get('title') or '（无标题）'}", "【结构化要点】"]
+        for key in dim_keys:
+            dim_label, field = COMPARISON_DIMENSIONS[key]
+            val = _stringify_field(info.get(field))
+            if len(val) > COMPARISON_FIELD_MAXLEN:
+                val = val[:COMPARISON_FIELD_MAXLEN] + "…"
+            lines.append(f"- {dim_label}：{val}")
+
+        evidence = _retrieve_evidence(p.get("paper_id"), view, p.get("chunks"), per_paper_budget)
+        if evidence:
+            lines.append("【原文相关片段（对比时以此为准）】")
+            lines.append(evidence)
+
+        blocks.append("\n".join(lines))
+    papers_block = "\n\n".join(blocks)
+
+    prompt_dir = os.path.join(PROMPTS_DIR, "report_templates")
+    template_path = os.path.join(prompt_dir, f"comparison_{view}.txt")
+    if os.path.exists(template_path):
+        with open(template_path, "r", encoding="utf-8") as f:
+            template = f.read()
+    else:
+        logger.warning(f"[对比] 模板缺失，使用默认模板: comparison_{view}.txt")
+        template = "请对以下多篇论文做横向对比评述，使用 Markdown、中文：\n\n{papers_block}\n"
+
+    return template.format(papers_block=papers_block)
+
+
+def generate_comparison_stream(papers_info: List[Dict[str, Any]], view: str = "overall",
+                               llm_client: LLMClient = None):
+    """
+    流式生成跨论文对比综述。逐块 yield dict 事件：
+      {"type": "delta", "content": "..."}   综述增量
+      {"type": "error", "error": "..."}     出错
+    表格数据由调用方通过 build_comparison_table 单独获取并先行返回。
+    """
+    if not llm_client:
+        yield {"type": "error", "error": "LLM 客户端未提供"}
+        return
+    if not papers_info or len(papers_info) < 2:
+        yield {"type": "error", "error": "对比至少需要 2 篇论文"}
+        return
+
+    try:
+        prompt = _build_comparison_prompt(papers_info, view)
+        for evt in llm_client.call_stream(prompt):
+            yield evt
+            if evt.get("type") == "error":
+                return
+    except Exception as e:
+        logger.exception(f"[对比-流式] 生成对比综述失败: {str(e)}")
+        yield {"type": "error", "error": f"生成对比综述失败: {str(e)}"}
+
+
 def _build_report_prompt(context: str, report_type: str, report_title: str) -> str:
     """
     构建报告生成 Prompt

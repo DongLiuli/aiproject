@@ -242,6 +242,33 @@ export const reportsAPI = {
   getReports(paperId) {
     return api.get(`/api/reports/${paperId}`)
   },
+
+  /**
+   * 跨论文对比（功能 A）。onTable 收到表格数据（首帧），onDelta 收到累积综述文本。
+   * 返回 { table, content }；出错抛带 userMessage 的 Error。
+   */
+  async compareStream(paperIds, view, { onTable, onDelta } = {}) {
+    let table = null
+    let content = ''
+    let streamError = null
+    await streamSSE('/api/reports/comparison', { paper_ids: paperIds, view }, (evt) => {
+      if (evt.type === 'table') {
+        table = evt.table || null
+        onTable?.(table)
+      } else if (evt.type === 'delta') {
+        content += evt.content || ''
+        onDelta?.(content)
+      } else if (evt.type === 'error') {
+        streamError = evt.message || '对比生成失败，请重试'
+      }
+    })
+    if (streamError) {
+      const err = new Error(streamError)
+      err.userMessage = streamError
+      throw err
+    }
+    return { table, content }
+  },
 }
 
 export default api

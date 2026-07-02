@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..models import get_db, Paper, Report, User
+from typing import List
+
+from ..models import get_db, Paper, Report, User, PaperStructuredInfo, Chunk
 from .auth import get_current_user
 from .user import _decrypt
 
@@ -23,6 +25,86 @@ def _sse(obj: dict) -> str:
 
 class GenerateReportRequest(BaseModel):
     report_type: str = "quick"  # quick / method / experiment
+
+
+class ComparisonRequest(BaseModel):
+    paper_ids: List[str]
+    view: str = "overall"  # overall / method / experiment
+
+
+@router.post("/comparison")
+def compare_papers_endpoint(body: ComparisonRequest, user_id: str = Depends(get_current_user)):
+    """跨论文对比（功能 A）：SSE 先返回表格数据（来自 DB，秒出），再流式返回综述。"""
+    if body.view not in ("overall", "method", "experiment"):
+        raise HTTPException(400, detail={"error": {"code": "INVALID_VIEW", "message": "对比视角无效，支持 overall/method/experiment"}})
+
+    # 去重并保序
+    seen = set()
+    paper_ids = [pid for pid in body.paper_ids if pid and not (pid in seen or seen.add(pid))]
+    if not (2 <= len(paper_ids) <= 5):
+        raise HTTPException(400, detail={"error": {"code": "INVALID_COUNT", "message": "请选择 2~5 篇论文进行对比"}})
+
+    db = next(get_db())
+
+    # 校验归属 + 解析状态，并按请求顺序收集结构化信息
+    papers_info = []
+    for pid in paper_ids:
+        paper = db.query(Paper).filter(Paper.paper_id == pid, Paper.user_id == user_id).first()
+        if not paper:
+            raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": f"论文不存在或无权限: {pid}"}})
+        if paper.parse_status != "completed":
+            raise HTTPException(400, detail={"error": {"code": "PARSE_NOT_DONE", "message": f"论文尚未完成解析：{paper.title or paper.file_name}"}})
+        info = db.query(PaperStructuredInfo).filter(PaperStructuredInfo.paper_id == pid).first()
+        # 全篇分块（供综述做检索增强，档2）；表格只用结构化字段，不受影响
+        chunks = db.query(Chunk).filter(
+            Chunk.paper_id == pid
+        ).order_by(Chunk.page_number, Chunk.paragraph_index).all()
+        papers_info.append({
+            "paper_id": pid,
+            "title": paper.title or paper.file_name,
+            "info": info.to_dict() if info else {},
+            "chunks": chunks,
+        })
+
+    # 用户 API Key
+    user = db.query(User).filter(User.id == user_id).first()
+    api_key = _decrypt(user.api_key_encrypted) if (user and user.api_key_encrypted) else None
+    if not api_key:
+        raise HTTPException(400, detail={"error": {"code": "NO_API_KEY", "message": "请先在设置页配置 API Key"}})
+
+    model_preference = user.model_preference if user else "deepseek-chat"
+    provider = "qwen" if model_preference == "qwen-turbo" else "deepseek"
+
+    from ai.llm_client import LLMClient
+    from ai.report_generator import build_comparison_table, generate_comparison_stream
+
+    llm_client = LLMClient(api_key=api_key, provider=provider)
+    table = build_comparison_table(papers_info, body.view)
+
+    def event_gen():
+        try:
+            # 首帧：表格数据，前端立即渲染
+            yield _sse({"type": "table", "table": table})
+
+            got_content = False
+            for evt in generate_comparison_stream(papers_info, body.view, llm_client):
+                etype = evt.get("type")
+                if etype == "delta":
+                    got_content = True
+                    yield _sse({"type": "delta", "content": evt.get("content", "")})
+                elif etype == "error":
+                    yield _sse({"type": "error", "message": evt.get("error", "对比综述生成失败")})
+                    return
+
+            if not got_content:
+                yield _sse({"type": "error", "message": "未生成有效对比综述"})
+                return
+
+            yield _sse({"type": "done", "view": body.view})
+        except Exception as e:
+            yield _sse({"type": "error", "message": f"对比生成失败: {str(e)}"})
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 @router.post("/{paper_id}")

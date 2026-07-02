@@ -1,15 +1,35 @@
 <script setup>
 import { computed } from 'vue'
-import { FileText, Clock, Trash2, RefreshCw, ChevronRight } from 'lucide-vue-next'
+import { FileText, Clock, Trash2, RefreshCw, ChevronRight, Check } from 'lucide-vue-next'
 
 const props = defineProps({
   paper: {
     type: Object,
     required: true,
   },
+  // 对比多选模式
+  selectable: {
+    type: Boolean,
+    default: false,
+  },
+  selected: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-const emit = defineEmits(['view', 'delete', 'reparse'])
+const emit = defineEmits(['view', 'delete', 'reparse', 'toggle-select'])
+
+// 仅已完成解析的论文可参与对比
+const selectDisabled = computed(() => props.paper.parse_status !== 'completed')
+
+function handleCardClick() {
+  if (props.selectable) {
+    if (!selectDisabled.value) emit('toggle-select', props.paper)
+    return
+  }
+  emit('view', props.paper)
+}
 
 const statusText = computed(() => {
   const status = props.paper.parse_status
@@ -63,7 +83,23 @@ const formatSize = (bytes) => {
 </script>
 
 <template>
-  <div class="paper-card" @click="emit('view', paper)">
+  <div
+    class="paper-card"
+    :class="{ selectable, selected, 'select-disabled': selectable && selectDisabled }"
+    @click="handleCardClick"
+  >
+    <div v-if="selectable" class="select-check" :class="{ checked: selected }">
+      <Check v-if="selected" class="check-icon" />
+    </div>
+
+    <div
+      v-if="selectable && selectDisabled"
+      class="select-overlay"
+      title="仅已完成解析的论文可对比"
+    >
+      未完成解析，不可对比
+    </div>
+
     <div class="card-header">
       <div class="paper-icon">
         <FileText class="icon" />
@@ -117,17 +153,70 @@ const formatSize = (bytes) => {
 
 <style scoped>
 .paper-card {
+  position: relative;
   background: white;
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   cursor: pointer;
   transition: all 0.2s;
+  border: 2px solid transparent;
 }
 
 .paper-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.paper-card.selectable {
+  padding-left: 52px;
+}
+
+.paper-card.selected {
+  border-color: #667eea;
+  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.25);
+}
+
+.paper-card.select-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.select-check {
+  position: absolute;
+  top: 20px;
+  left: 16px;
+  width: 22px;
+  height: 22px;
+  border: 2px solid #cbd5e1;
+  border-radius: 6px;
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.select-check.checked {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-color: #667eea;
+}
+
+.check-icon {
+  width: 14px;
+  height: 14px;
+  color: white;
+}
+
+.select-overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 0.75rem;
+  color: #dc2626;
+  background: #fef2f2;
+  padding: 2px 8px;
+  border-radius: 6px;
 }
 
 .card-header {
