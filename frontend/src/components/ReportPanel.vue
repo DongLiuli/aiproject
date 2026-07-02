@@ -26,7 +26,7 @@ const props = defineProps({
 
 const reportsStore = useReportsStore()
 const activeTab = ref('structured')
-const generating = ref(false)
+const generatingTab = ref(null)
 const reportContent = ref('')
 const streamingContent = ref('')
 const reportError = ref('')
@@ -137,14 +137,14 @@ async function copyContent(content) {
 }
 
 async function generateReport(type) {
-  if (generating.value) return
+  if (generatingTab.value) return
 
   if (!props.paper.structured_info) {
     reportContent.value = '论文尚未完成解析，请先等待解析完成或点击"重新解析"按钮'
     return
   }
 
-  generating.value = true
+  generatingTab.value = type
   activeTab.value = type
   reportError.value = ''
   streamingContent.value = ''
@@ -157,7 +157,7 @@ async function generateReport(type) {
   } catch (err) {
     reportError.value = err.userMessage || '报告生成失败，请重试'
   } finally {
-    generating.value = false
+    generatingTab.value = null
   }
 }
 
@@ -240,12 +240,12 @@ onMounted(() => {
       >
         <component :is="tab.icon" class="tab-icon" />
         <span>{{ tab.name }}</span>
-        <Loader2 v-if="generating && activeTab === tab.id" class="tab-spinner" />
+        <Loader2 v-if="generatingTab === tab.id" class="tab-spinner" />
       </button>
     </div>
 
     <div class="report-content">
-      <div v-if="generating" class="content-body">
+      <div v-if="generatingTab && activeTab === generatingTab" class="content-body">
         <div v-if="streamingContent" class="markdown-preview" v-html="streamingRendered"></div>
         <div v-else class="content-loading">
           <Loader2 class="loading-icon" />
