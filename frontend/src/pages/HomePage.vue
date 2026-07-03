@@ -4,9 +4,11 @@ import { useRouter } from 'vue-router'
 import { usePapersStore } from '@/stores/papers'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
-import { FileText, Search, Filter, Upload, BookOpen, GitCompare, X } from 'lucide-vue-next'
+import { FileText, Search, Filter, Upload, BookOpen, GitCompare, Network, X } from 'lucide-vue-next'
 import PaperCard from '@/components/PaperCard.vue'
+import RecommendCard from '@/components/RecommendCard.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import { papersAPI } from '@/api'
 const router = useRouter()
 const papersStore = usePapersStore()
 const authStore = useAuthStore()
@@ -28,9 +30,23 @@ function handleDialogConfirm() {
   if (fn) fn()
 }
 
+// 首页精选推荐（功能 C）
+const recommendations = ref([])
+async function loadRecommendations() {
+  try {
+    // 注意：api 响应拦截器已返回 response.data，这里直接拿 { items }
+    const res = await papersAPI.recommendations(6)
+    recommendations.value = res.items || []
+  } catch (err) {
+    // 推荐失败不影响主列表，静默降级为不展示
+    recommendations.value = []
+  }
+}
+
 onMounted(async () => {
   await authStore.initialize()
   await papersStore.fetchPapers()
+  loadRecommendations()
 })
 
 // 搜索走后端 keyword（防抖 300ms），不再只搜当前页
@@ -57,6 +73,8 @@ function handleDeletePaper(paperId) {
     onConfirm: async () => {
       try {
         await papersStore.deletePaper(paperId)
+        // 删除的论文可能正在推荐区展示（管理员推荐位/标签匹配），刷新推荐避免残留卡片点开 404
+        await loadRecommendations()
       } catch (err) {
         openDialog({ title: '删除失败', message: err.userMessage || '删除失败，请重试', cancelText: '' })
       }
@@ -72,8 +90,9 @@ async function handleReparse(paperId) {
   }
 }
 
-// ==================== 跨论文对比（功能 A） ====================
-const compareMode = ref(false)
+// ==================== 选择模式：跨论文对比（A） / 知识图谱（D） ====================
+// 二者共用一套卡片多选 + 底部浮动栏，互斥（进入一个自动退出另一个）
+const selectMode = ref('') // '' | 'compare' | 'graph'
 const selectedIds = ref([])
 const compareView = ref('overall')
 const viewOptions = [
@@ -86,9 +105,13 @@ const completedCount = computed(
   () => papersStore.papers.filter((p) => p.parse_status === 'completed').length,
 )
 
-function toggleCompareMode() {
-  compareMode.value = !compareMode.value
-  if (!compareMode.value) selectedIds.value = []
+function enterMode(mode) {
+  selectMode.value = selectMode.value === mode ? '' : mode
+  selectedIds.value = []
+}
+function exitMode() {
+  selectMode.value = ''
+  selectedIds.value = []
 }
 
 function handleToggleSelect(paper) {
@@ -96,13 +119,20 @@ function handleToggleSelect(paper) {
   const idx = selectedIds.value.indexOf(id)
   if (idx !== -1) {
     selectedIds.value.splice(idx, 1)
-  } else {
-    if (selectedIds.value.length >= 5) {
-      openDialog({ title: '数量超限', message: '最多选择 5 篇论文进行对比', cancelText: '' })
-      return
-    }
-    selectedIds.value.push(id)
+    return
   }
+  // 对比最多 5 篇；图谱不限（越多关系越丰富）
+  if (selectMode.value === 'compare' && selectedIds.value.length >= 5) {
+    openDialog({ title: '数量超限', message: '最多选择 5 篇论文进行对比', cancelText: '' })
+    return
+  }
+  selectedIds.value.push(id)
+}
+
+function selectAllCompleted() {
+  selectedIds.value = papersStore.papers
+    .filter((p) => p.parse_status === 'completed')
+    .map((p) => p.paper_id)
 }
 
 function startCompare() {
@@ -114,6 +144,14 @@ function startCompare() {
     name: 'compare',
     query: { ids: selectedIds.value.join(','), view: compareView.value },
   })
+}
+
+function startGraph() {
+  if (selectedIds.value.length < 1) {
+    openDialog({ title: '选择不足', message: '请至少选择 1 篇论文生成图谱', cancelText: '' })
+    return
+  }
+  router.push({ name: 'graph', query: { ids: selectedIds.value.join(',') } })
 }
 </script>
 
@@ -133,6 +171,20 @@ function startCompare() {
       </div>
     </div>
 
+    <section v-if="recommendations.length" class="recommend-section">
+      <h2 class="recommend-heading">🔥 精选推荐</h2>
+      <div class="recommend-grid">
+        <RecommendCard
+          v-for="r in recommendations"
+          :key="r.paper_id"
+          :paper="r"
+          :reason="r.reason"
+          :source="r.recommend_source"
+          @view="handleViewPaper"
+        />
+      </div>
+    </section>
+
     <div class="page-actions">
       <div class="search-bar">
         <Search class="search-icon" />
@@ -151,18 +203,32 @@ function startCompare() {
 
       <button
         class="filter-btn compare-toggle"
-        :class="{ active: compareMode }"
-        @click="toggleCompareMode"
+        :class="{ active: selectMode === 'compare' }"
+        @click="enterMode('compare')"
         :disabled="completedCount < 2"
         :title="completedCount < 2 ? '至少需要 2 篇已解析论文' : ''"
       >
         <GitCompare class="filter-icon" />
-        <span>{{ compareMode ? '退出对比' : '对比' }}</span>
+        <span>{{ selectMode === 'compare' ? '退出对比' : '对比' }}</span>
+      </button>
+
+      <button
+        class="filter-btn graph-entry"
+        :class="{ active: selectMode === 'graph' }"
+        @click="enterMode('graph')"
+        :disabled="completedCount < 1"
+        :title="completedCount < 1 ? '至少需要 1 篇已解析论文' : '选择论文生成知识图谱'"
+      >
+        <Network class="filter-icon" />
+        <span>{{ selectMode === 'graph' ? '退出图谱' : '知识图谱' }}</span>
       </button>
     </div>
 
-    <div v-if="compareMode" class="compare-hint">
+    <div v-if="selectMode === 'compare'" class="compare-hint">
       对比模式：勾选 2~5 篇已解析论文，然后点击底部「开始对比」
+    </div>
+    <div v-else-if="selectMode === 'graph'" class="compare-hint">
+      图谱模式：勾选参与构图的已解析论文（可「全选」），然后点击底部「生成图谱」
     </div>
 
     <div v-if="papersStore.loading" class="loading-state">
@@ -195,7 +261,7 @@ function startCompare() {
         v-for="paper in papersStore.papers"
         :key="paper.paper_id"
         :paper="paper"
-        :selectable="compareMode"
+        :selectable="!!selectMode"
         :selected="selectedIds.includes(paper.paper_id)"
         @view="handleViewPaper"
         @delete="handleDeletePaper"
@@ -204,7 +270,8 @@ function startCompare() {
       />
     </div>
 
-    <div v-if="compareMode" class="compare-bar">
+    <!-- 对比模式浮动栏 -->
+    <div v-if="selectMode === 'compare'" class="compare-bar">
       <div class="compare-bar-info">
         <GitCompare class="compare-bar-icon" />
         <span>已选 <strong>{{ selectedIds.length }}</strong> / 5 篇</span>
@@ -218,7 +285,24 @@ function startCompare() {
         <button class="compare-start-btn" :disabled="selectedIds.length < 2" @click="startCompare">
           开始对比
         </button>
-        <button class="compare-close-btn" @click="toggleCompareMode" title="退出对比">
+        <button class="compare-close-btn" @click="exitMode" title="退出对比">
+          <X class="compare-close-icon" />
+        </button>
+      </div>
+    </div>
+
+    <!-- 图谱模式浮动栏 -->
+    <div v-else-if="selectMode === 'graph'" class="compare-bar">
+      <div class="compare-bar-info">
+        <Network class="compare-bar-icon" />
+        <span>已选 <strong>{{ selectedIds.length }}</strong> 篇</span>
+      </div>
+      <div class="compare-bar-actions">
+        <button class="compare-view-select" @click="selectAllCompleted">全选</button>
+        <button class="compare-start-btn" :disabled="selectedIds.length < 1" @click="startGraph">
+          生成图谱
+        </button>
+        <button class="compare-close-btn" @click="exitMode" title="退出图谱">
           <X class="compare-close-icon" />
         </button>
       </div>
@@ -351,6 +435,11 @@ function startCompare() {
   border-color: transparent;
 }
 
+.graph-entry:hover {
+  border-color: #667eea;
+  color: #4f46e5;
+}
+
 .compare-hint {
   margin-bottom: 16px;
   padding: 10px 16px;
@@ -401,6 +490,8 @@ function startCompare() {
 
 .compare-view-select {
   padding: 8px 12px;
+  background: white;
+  color: #333;
   border: 1px solid #e0e0e0;
   border-radius: 8px;
   font-size: 0.875rem;
@@ -560,6 +651,22 @@ function startCompare() {
   font-size: 0.875rem;
 }
 
+/* 精选推荐区（功能 C） */
+.recommend-section {
+  margin-bottom: 28px;
+}
+.recommend-heading {
+  margin: 0 0 14px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #1f2937;
+}
+.recommend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
 @media (max-width: 768px) {
   .page-header {
     flex-direction: column;
@@ -567,6 +674,10 @@ function startCompare() {
   }
 
   .papers-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .recommend-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -302,6 +302,12 @@
 
 返回 200：
 { "deleted": true }
+
+# 特例：若该论文是管理员推荐位（is_recommended=true），不会硬删，
+# 而是「转交系统账户」托管——保留论文正文/结构化/chunks/向量/文件（paper_id 不变），
+# 仅清理原作者对该论文的会话与报告，论文从原作者库消失但首页推荐继续可读。
+# 此时返回：
+{ "deleted": true, "transferred": true }
 ```
 
 ### POST /api/papers/{paper_id}/reparse

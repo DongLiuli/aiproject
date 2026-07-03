@@ -41,6 +41,11 @@ ACCESS_TOKEN_EXPIRE_HOURS = 24 * 7  # 7 天
 # ⚠️ 生产环境请不要将此密钥提交到版本控制
 API_KEY_ENCRYPTION_KEY = "lit-ai-2026-api-key-encrypt-32chr"  # 32 字节，仅开发环境使用
 
+# 系统账户：被推荐论文被原作者删除时，转交给该账户托管（保留推荐可读）
+# 固定 id 走 git 同步，多人各自本地 MySQL 也人人一致；由 init_system_user() 幂等自建
+SYSTEM_USER_ID = "system"
+SYSTEM_USERNAME = "__system__"
+
 # 文件上传限制
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
 

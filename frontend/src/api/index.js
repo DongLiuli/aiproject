@@ -79,6 +79,11 @@ export const papersAPI = {
     return api.get('/api/papers', { params })
   },
 
+  // 首页精选推荐（功能 C）：管理员推荐位 + 标签匹配
+  recommendations(limit = 6) {
+    return api.get('/api/papers/recommendations', { params: { limit } })
+  },
+
   upload(formData) {
     return api.post('/api/papers/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -111,6 +116,17 @@ export const papersAPI = {
         'X-Session-ID': localStorage.getItem('session_id') || '',
       },
     })
+  },
+}
+
+// 知识图谱（功能 D）：论文引用 + 共用数据集/方法关系图
+export const graphAPI = {
+  // paperIds 可选：传数组则只对选中论文构图；不传/空则用全部 completed 论文
+  get(paperIds) {
+    const params = {}
+    if (paperIds && paperIds.length) params.paper_ids = paperIds.join(',')
+    // 首次可能触发多篇论文的 LLM 实体抽取，给更长超时（之后走文件缓存会很快）
+    return api.get('/api/graph', { params, timeout: 120000 })
   },
 }
 

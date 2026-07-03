@@ -34,6 +34,11 @@ class UserUpdateRequest(BaseModel):
     disabled: Optional[bool] = None
 
 
+class RecommendRequest(BaseModel):
+    is_recommended: bool
+    recommend_order: Optional[int] = None
+
+
 class DBQueryRequest(BaseModel):
     sql: Optional[str] = None
 
@@ -230,6 +235,54 @@ def delete_paper_by_admin(paper_id: str, admin_id: str = Depends(get_current_adm
         os.remove(index_path)
 
     return {"deleted": True, "paper_id": paper_id}
+
+
+# ========== 推荐管理（功能 C） ==========
+
+@router.get("/recommendations")
+def list_recommendations(admin_id: str = Depends(get_current_admin)):
+    """当前所有推荐位论文，按 recommend_order 升序（NULL 最后）"""
+    db = next(get_db())
+    papers = (
+        db.query(Paper)
+        .filter(Paper.is_recommended == True)  # noqa: E712
+        .order_by(
+            Paper.recommend_order.is_(None),
+            Paper.recommend_order.asc(),
+            Paper.upload_time.desc(),
+        )
+        .all()
+    )
+    return {"items": [p.to_dict() for p in papers], "total": len(papers)}
+
+
+@router.post("/papers/{paper_id}/recommend")
+def set_recommend(paper_id: str, body: RecommendRequest, admin_id: str = Depends(get_current_admin)):
+    """设为 / 取消推荐位。设为时若未指定 order，自动排到末尾；取消时清空 order。"""
+    db = next(get_db())
+    paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+    if not paper:
+        raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
+
+    if body.is_recommended:
+        paper.is_recommended = True
+        if body.recommend_order is not None:
+            paper.recommend_order = body.recommend_order
+        elif paper.recommend_order is None:
+            # 自动分配：当前最大 order + 1（无则 0）
+            max_order = (
+                db.query(Paper.recommend_order)
+                .filter(Paper.is_recommended.is_(True), Paper.recommend_order.isnot(None))
+                .order_by(Paper.recommend_order.desc())
+                .first()
+            )
+            paper.recommend_order = (max_order[0] + 1) if max_order and max_order[0] is not None else 0
+    else:
+        paper.is_recommended = False
+        paper.recommend_order = None
+
+    db.commit()
+    return paper.to_dict()
 
 
 # ========== 用户管理 ==========
@@ -753,6 +806,24 @@ def init_default_admin():
                 password_hash=pwd_context.hash("admin123"),
             )
             db.add(admin)
+            db.commit()
+    finally:
+        db.close()
+
+
+def init_system_user():
+    """确保存在系统托管账户（id=SYSTEM_USER_ID）。
+
+    被推荐论文被原作者删除时，会把 user_id 转交到该账户，从而保留论文与知识库、
+    首页推荐继续可读。系统账户永不登录，固定 id 走 git 同步，人人本地一致。
+    """
+    from ..models import SessionLocal
+    from ..config import SYSTEM_USER_ID, SYSTEM_USERNAME
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.id == SYSTEM_USER_ID).first()
+        if not existing:
+            db.add(User(id=SYSTEM_USER_ID, username=SYSTEM_USERNAME, is_anonymous=False))
             db.commit()
     finally:
         db.close()

@@ -19,9 +19,9 @@ This repo is indexed by **CodeGraph** (a local code knowledge graph, exposed as 
 3. The index auto-syncs on file changes; if results look stale, run `codegraph sync` (or `codegraph init` to rebuild).
 
 **Collaboration rules (multi-developer repo):**
-- **Do not modify other teammates' code** without explicit instruction. Commits are tagged by role (e.g. `[B角色]`); stay within the area you're asked to work on.
-- When a fix would require touching code outside your scope, surface it to the user and let them decide — don't reach across boundaries silently.
-- Always confirm before editing, deleting, or refactoring existing code.
+- Cross-cutting changes are allowed: you may modify any file in the repo, including code originally written by other teammates, when the task calls for it. (Previously teammate code was off-limits; that restriction has been lifted.)
+- When a change touches shared/other-owned code, prefer additive, backward-compatible edits (e.g. new optional props/query params) so existing features keep working, and call out the cross-file impact in your plan.
+- Always confirm the plan before editing, deleting, or refactoring existing code.
 
 CLI equivalents (`codegraph explore ...`, `codegraph node ...`) exist for terminal use, but prefer the MCP tools in-session.
 

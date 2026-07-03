@@ -87,6 +87,8 @@ class Paper(Base):
     field = Column(String(200), nullable=True)       # 学科方向
     tags = Column(JSON, nullable=True)           # list[str]
     read_status = Column(String(20), default="unread")  # unread / skimmed / read / noted
+    is_recommended = Column(Boolean, default=False)   # 管理员推荐位（功能 C）
+    recommend_order = Column(Integer, nullable=True)  # 推荐排序，越小越靠前
 
     # 关联
     user = relationship("User", back_populates="papers")
@@ -108,6 +110,8 @@ class Paper(Base):
             "field": self.field,
             "tags": self.tags or [],
             "read_status": self.read_status,
+            "is_recommended": bool(self.is_recommended),
+            "recommend_order": self.recommend_order,
         }
 
 

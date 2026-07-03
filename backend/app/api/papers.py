@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from ..config import UPLOAD_DIR, MAX_UPLOAD_SIZE
+from ..config import UPLOAD_DIR, MAX_UPLOAD_SIZE, SYSTEM_USER_ID
 from ..models import get_db, User, Paper, PaperStructuredInfo, Conversation, Message, Chunk, Report
 from .auth import get_current_user
 from .user import _decrypt
@@ -135,12 +135,109 @@ def list_papers(
     return {"items": items, "total": total, "page": page, "size": size}
 
 
+# ⚠️ 该路由必须注册在 GET /{paper_id} 之前，否则 "recommendations" 会被当成 paper_id 匹配
+@router.get("/recommendations")
+def get_recommendations(
+    limit: int = Query(6, ge=1, le=20),
+    user_id: str = Depends(get_current_user),
+):
+    """首页精选推荐（功能 C）：管理员推荐位（跨用户，主）+ 标签匹配（当前用户，点缀）。
+
+    匿名/登录都可访问；空则返回 items: []。每条附 reason / recommend_source。
+    """
+    db = next(get_db())
+    items = []
+    seen = set()  # 已入选的 paper_id，去重
+
+    # 1) 管理员推荐位：跨用户，按 recommend_order 升序（NULL 排最后），再按上传时间倒序
+    admin_papers = (
+        db.query(Paper)
+        .filter(Paper.is_recommended == True)  # noqa: E712
+        .order_by(
+            Paper.recommend_order.is_(None),      # 非 NULL 在前
+            Paper.recommend_order.asc(),
+            Paper.upload_time.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+    for p in admin_papers:
+        if p.paper_id in seen:
+            continue
+        seen.add(p.paper_id)
+        items.append({**p.to_dict(), "reason": "管理员精选", "recommend_source": "admin"})
+
+    # 2) 标签匹配补足：不足 limit 时，用当前用户近期论文的 field/tags 给「其它论文」打分
+    if len(items) < limit:
+        recent = (
+            db.query(Paper)
+            .filter(Paper.user_id == user_id, Paper.parse_status == "completed")
+            .order_by(Paper.upload_time.desc())
+            .limit(10)
+            .all()
+        )
+        user_tags = set()
+        user_fields = set()
+        for p in recent:
+            for t in (p.tags or []):
+                user_tags.add(t)
+            if p.field:
+                user_fields.add(p.field)
+
+        if user_tags or user_fields:
+            candidates = (
+                db.query(Paper)
+                .filter(
+                    Paper.user_id == user_id,
+                    Paper.parse_status == "completed",
+                    Paper.is_recommended.isnot(True),  # 含 False 与历史 NULL 行
+                )
+                .all()
+            )
+            scored = []
+            for c in candidates:
+                if c.paper_id in seen:
+                    continue
+                ctags = set(c.tags or [])
+                inter = ctags & user_tags
+                score = len(inter) * 10
+                same_field = bool(c.field and c.field in user_fields)
+                if same_field:
+                    score += 5
+                if c.read_status == "unread":
+                    score += 2
+                if score <= 0:
+                    continue  # 无任何重合，不推
+                # 生成推荐理由
+                if inter:
+                    reason = "含相同标签：" + "、".join(list(inter)[:2])
+                elif same_field:
+                    reason = f"与你关注的 {c.field} 领域相关"
+                else:
+                    reason = "你可能感兴趣"
+                scored.append((score, c, reason))
+
+            # 分数降序，同分按上传时间倒序
+            scored.sort(key=lambda x: (x[0], x[1].upload_time or datetime.min), reverse=True)
+            for score, c, reason in scored:
+                if len(items) >= limit:
+                    break
+                seen.add(c.paper_id)
+                items.append({**c.to_dict(), "reason": reason, "recommend_source": "tag"})
+
+    return {"items": items}
+
+
 @router.get("/{paper_id}")
 def get_paper(paper_id: str, user_id: str = Depends(get_current_user)):
-    """论文详情（含结构化信息 + 原文）"""
+    """论文详情（含结构化信息 + 原文）。
+
+    归属校验：本人论文正常查看；他人论文仅当被管理员设为推荐（is_recommended）时
+    才放行「只读」查看（首页精选推荐可点开），否则 404。写操作接口不放行。
+    """
     db = next(get_db())
-    paper = db.query(Paper).filter(Paper.paper_id == paper_id, Paper.user_id == user_id).first()
-    if not paper:
+    paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+    if not paper or (paper.user_id != user_id and not paper.is_recommended):
         raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
 
     result = paper.to_dict()
@@ -184,17 +281,39 @@ def update_paper(paper_id: str, body: UpdatePaperRequest, user_id: str = Depends
 
 @router.delete("/{paper_id}")
 def delete_paper(paper_id: str, user_id: str = Depends(get_current_user)):
-    """删除论文及关联数据"""
+    """删除论文及关联数据。
+
+    普通论文：级联硬删（会话/消息/报告/chunks/结构化/向量/文件）。
+    管理员推荐位论文（is_recommended）：不硬删，改为「转交系统账户」——
+    清理原作者对该论文的会话与消息后，把 user_id 改到 SYSTEM_USER_ID，
+    保留论文正文/结构化/chunks/向量/文件，paper_id 不变。论文从原作者库消失，
+    但首页推荐继续可读；其它读者对该论文的会话保留。
+    """
     db = next(get_db())
     paper = db.query(Paper).filter(Paper.paper_id == paper_id, Paper.user_id == user_id).first()
     if not paper:
         raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
 
-    # 级联删除数据库记录
+    # 清理原作者对该论文的会话与消息（两条路径都要删作者自己的会话）
     db.query(Message).filter(Message.conversation_id.in_(
-        db.query(Conversation.conversation_id).filter(Conversation.paper_id == paper_id)
+        db.query(Conversation.conversation_id).filter(
+            Conversation.paper_id == paper_id, Conversation.user_id == user_id
+        )
     )).delete(synchronize_session=False)
-    db.query(Conversation).filter(Conversation.paper_id == paper_id).delete()
+    db.query(Conversation).filter(
+        Conversation.paper_id == paper_id, Conversation.user_id == user_id
+    ).delete()
+
+    # 推荐位论文：转交系统账户托管，保留论文与知识库，仅换归属
+    if paper.is_recommended:
+        db.query(Report).filter(
+            Report.paper_id == paper_id, Report.user_id == user_id
+        ).delete()
+        paper.user_id = SYSTEM_USER_ID
+        db.commit()
+        return {"deleted": True, "transferred": True}
+
+    # 普通论文：级联硬删数据库记录
     db.query(Report).filter(Report.paper_id == paper_id).delete()
     db.query(Chunk).filter(Chunk.paper_id == paper_id).delete()
     db.query(PaperStructuredInfo).filter(PaperStructuredInfo.paper_id == paper_id).delete()

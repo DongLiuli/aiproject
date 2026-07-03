@@ -122,6 +122,7 @@ tr:hover { background:#f9fafb; }
   <div class="sidebar">
     <div class="sidebar-item active" onclick="switchTab('stats', this)">📊 系统统计</div>
     <div class="sidebar-item" onclick="switchTab('papers', this)">📄 论文管理</div>
+    <div class="sidebar-item" onclick="switchTab('recommend', this)">⭐ 推荐管理</div>
     <div class="sidebar-item" onclick="switchTab('users', this)">👥 用户管理</div>
     <div class="sidebar-item" onclick="switchTab('db', this)">🗄️ 数据库管理</div>
   </div>
@@ -220,6 +221,7 @@ async function renderTab() {
   const c = document.getElementById('tabContent');
   if (currentTab === 'stats') c.innerHTML = await renderStats();
   else if (currentTab === 'papers') c.innerHTML = await renderPapers();
+  else if (currentTab === 'recommend') c.innerHTML = await renderRecommend();
   else if (currentTab === 'users') c.innerHTML = await renderUsers();
   else if (currentTab === 'db') { c.innerHTML = await renderDB(); await renderDBSubContent(); }
 }
@@ -292,6 +294,101 @@ async function deletePaper(id) {
   try {
     await api('DELETE', '/api/admin/papers/' + id);
     toast('删除成功');
+    renderTab();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ========== 推荐管理（功能 C） ==========
+async function renderRecommend() {
+  try {
+    const d = await api('GET', '/api/admin/recommendations');
+    let recHtml = `<div class="card"><h3>⭐ 当前推荐位（${d.total} 篇）</h3>`;
+    if (!d.items.length) {
+      recHtml += `<div class="empty">暂无推荐，下方搜索论文添加</div>`;
+    } else {
+      recHtml += `<div class="table-wrap"><table><thead><tr>
+        <th>顺序</th><th>标题</th><th>领域</th><th>用户ID</th><th>操作</th>
+      </tr></thead><tbody>`;
+      for (const p of d.items) {
+        recHtml += `<tr>
+          <td style="white-space:nowrap">${p.recommend_order ?? '-'}</td>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.title||p.file_name||'-'}</td>
+          <td>${p.field||'-'}</td>
+          <td style="font-size:0.75rem;color:#9ca3af">${(p.user_id||'').substring(0,8)}...</td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-outline" style="padding:4px 10px;font-size:0.75rem;margin-right:4px" onclick="changeOrder('${p.paper_id}', ${p.recommend_order ?? 0})">改顺序</button>
+            <button class="btn btn-danger" style="padding:4px 10px;font-size:0.75rem" onclick="unsetRecommend('${p.paper_id}')">取消推荐</button>
+          </td>
+        </tr>`;
+      }
+      recHtml += `</tbody></table></div>`;
+    }
+    recHtml += `</div>`;
+
+    const addHtml = `<div class="card"><h3>➕ 添加推荐</h3>
+      <div class="search-bar">
+        <input id="recSearch" placeholder="搜索标题或文件名..." onkeydown="if(event.key==='Enter')searchCandidates()" />
+        <button class="btn btn-outline" onclick="searchCandidates()">搜索</button>
+      </div>
+      <div id="candidateList"><div class="empty">输入关键词搜索要推荐的论文</div></div>
+    </div>`;
+
+    return recHtml + addHtml;
+  } catch(e) { return `<div class="empty">加载失败: ${e.message}</div>`; }
+}
+
+async function searchCandidates() {
+  const kw = document.getElementById('recSearch').value.trim();
+  const params = new URLSearchParams({page:1,size:30});
+  if (kw) params.set('keyword', kw);
+  const box = document.getElementById('candidateList');
+  try {
+    const d = await api('GET', '/api/admin/papers?' + params);
+    if (!d.items.length) { box.innerHTML = `<div class="empty">无匹配论文</div>`; return; }
+    let html = `<div class="table-wrap"><table><thead><tr>
+      <th>标题</th><th>领域</th><th>状态</th><th>推荐</th><th>操作</th>
+    </tr></thead><tbody>`;
+    for (const p of d.items) {
+      const isRec = p.is_recommended;
+      html += `<tr>
+        <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.title||p.file_name||'-'}</td>
+        <td>${p.field||'-'}</td>
+        <td>${statusBadge(p.parse_status)}</td>
+        <td>${isRec ? '✅ 已推荐' : '—'}</td>
+        <td>${isRec
+          ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:0.75rem" onclick="unsetRecommend('${p.paper_id}')">取消</button>`
+          : `<button class="btn btn-primary" style="padding:4px 10px;font-size:0.75rem" onclick="setRecommend('${p.paper_id}')">设为推荐</button>`}</td>
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+    box.innerHTML = html;
+  } catch(e) { box.innerHTML = `<div class="empty">搜索失败: ${e.message}</div>`; }
+}
+
+async function setRecommend(id) {
+  try {
+    await api('POST', '/api/admin/papers/' + id + '/recommend', { is_recommended: true });
+    toast('已设为推荐');
+    renderTab();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function unsetRecommend(id) {
+  try {
+    await api('POST', '/api/admin/papers/' + id + '/recommend', { is_recommended: false });
+    toast('已取消推荐');
+    renderTab();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function changeOrder(id, cur) {
+  const v = prompt('设置推荐顺序（数字越小越靠前）', cur);
+  if (v === null) return;
+  const order = parseInt(v, 10);
+  if (isNaN(order)) { toast('请输入数字', 'error'); return; }
+  try {
+    await api('POST', '/api/admin/papers/' + id + '/recommend', { is_recommended: true, recommend_order: order });
+    toast('顺序已更新');
     renderTab();
   } catch(e) { toast(e.message, 'error'); }
 }
