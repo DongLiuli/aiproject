@@ -445,7 +445,7 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
             for c in kb_result.get("chunks", []):
                 chunk = Chunk(
                     paper_id=c["paper_id"],
-                    section_title=c["section_title"],
+                    section_title=(c.get("section_title") or "")[:500],  # 防越界 VARCHAR(500)
                     page_number=c["page_number"],
                     paragraph_index=c["paragraph_index"],
                     content=c["content"],

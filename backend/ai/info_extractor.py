@@ -1,10 +1,48 @@
 """结构化信息抽取模块"""
 import json
 import re
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from .llm_client import LLMClient
 from .config import PROMPTS_DIR
 import os
+
+
+# ========== 方案三：抽取结果 Schema 校验 + 自修正 ==========
+
+MAX_EXTRACT_RETRY = 1  # 抽取结果不合格时的最大自修正重试次数
+
+# 期望为字符串的字段
+_STR_FIELDS = [
+    "title", "affiliation", "year", "doi", "abstract",
+    "research_background", "research_questions", "method_flow",
+    "model_algorithm", "dataset_info", "experiment_results", "future_work",
+]
+# 期望为数组的字段
+_LIST_FIELDS = [
+    "authors", "keywords", "evaluation_metrics", "innovations", "limitations",
+]
+# 必须存在（缺失即触发自修正）的核心字段
+_REQUIRED_FIELDS = [
+    "title", "research_background", "method_flow",
+    "experiment_results", "innovations", "limitations",
+]
+
+# ========== 方案二 2-lite：抽取文本按章节采样 ==========
+
+EXTRACT_TEXT_BUDGET = 12000   # 拼给 LLM 的总字符预算（原来只取 5000 且只在开头）
+_OPENING_BUDGET = 3500        # 开头（摘要/引言）预留字符数
+_PER_SECTION_BUDGET = 2200    # 每个命中关键章节最多取的字符数
+
+# 关键章节标题关键词（中英文），命中则优先纳入采样
+_KEY_SECTION_PATTERNS = [
+    r"abstract|摘要",
+    r"introduction|引言|背景",
+    r"method|approach|model|方法|模型|算法",
+    r"experiment|evaluation|result|实验|评估|结果",
+    r"discussion|analysis|讨论|分析",
+    r"conclusion|结论|总结",
+    r"limitation|future|局限|不足|展望|未来",
+]
 
 
 def extract_structured_info(full_text: str, sections: List[Dict[str, Any]], llm_client: LLMClient) -> Dict[str, Any]:
@@ -18,21 +56,28 @@ def extract_structured_info(full_text: str, sections: List[Dict[str, Any]], llm_
     """
     # 构建提取 Prompt
     prompt = _build_extraction_prompt(full_text, sections)
-    
-    # 调用 LLM
-    result = llm_client.call(prompt)
-    
-    if not result["success"]:
-        return {"success": False, "error": result["error"]}
-    
-    # 解析返回结果
-    try:
-        # 尝试直接解析 JSON
-        structured_data = json.loads(result["content"])
-    except json.JSONDecodeError:
-        # 正则兜底解析
-        structured_data = _parse_non_json_response(result["content"])
-    
+
+    last_content = ""
+    errors: List[str] = []
+    # 方案三：带 Schema 校验的自修正循环——解析成功但字段/类型不合格时，
+    # 把错误回喂给 LLM 重试补全（最多 MAX_EXTRACT_RETRY 次），仍失败才落正则兜底。
+    for attempt in range(MAX_EXTRACT_RETRY + 1):
+        cur_prompt = prompt if attempt == 0 else _build_fix_prompt(last_content, errors)
+        result = llm_client.call(cur_prompt)
+        if not result["success"]:
+            return {"success": False, "error": result["error"]}
+
+        last_content = result["content"]
+        structured_data = _try_parse_json(last_content)
+        if structured_data is not None:
+            errors = _validate_schema(structured_data)
+            if not errors:
+                structured_data["success"] = True
+                return structured_data
+        # JSON 非法或字段/类型不合格 → 若仍有重试次数则带 errors 再来一次
+
+    # 重试用尽仍不合格 → 正则兜底（与原行为一致，保证不阻断解析）
+    structured_data = _parse_non_json_response(last_content)
     structured_data["success"] = True
     return structured_data
 
@@ -82,12 +127,15 @@ def _build_extraction_prompt(full_text: str, sections: List[Dict[str, Any]]) -> 
     
     # 获取章节摘要
     section_summary = "\n".join([f"- {s['title']}: {s['content'][:200]}..." for s in sections[:5]])
-    
+
+    # 方案二 2-lite：按章节定向采样，覆盖全文关键部分（不再只取开头 5000 字）
+    sampled_text = _sample_text_for_extraction(full_text, sections)
+
     prompt = prompt_template.format(
-        full_text=full_text[:5000],  # 限制文本长度
+        full_text=sampled_text,
         sections=section_summary
     )
-    
+
     return prompt
 
 
@@ -146,5 +194,124 @@ def _parse_non_json_response(response: str) -> Dict[str, Any]:
             # 提取引号内的内容
             values = re.findall(r'["\'](.+?)["\']', items)
             result[field] = values if values else []
-    
+
     return result
+
+
+# ========== 方案三 辅助函数：JSON 解析 / Schema 校验 / 自修正 Prompt ==========
+
+def _try_parse_json(content: str) -> Optional[Dict[str, Any]]:
+    """尽力把 LLM 输出解析为 JSON 对象；失败返回 None。
+
+    比裸 json.loads 更鲁棒：去掉 ```json 代码围栏，并回退到"截取首个 { 到末个 }"。
+    """
+    if not content:
+        return None
+    text = content.strip()
+
+    # 去掉 ```json ... ``` / ``` ... ``` 代码围栏
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    # 回退：截取第一个 { 到最后一个 } 之间的内容再试一次
+    start, end = text.find("{"), text.rfind("}")
+    if 0 <= start < end:
+        try:
+            data = json.loads(text[start:end + 1])
+            return data if isinstance(data, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _validate_schema(data: Dict[str, Any]) -> List[str]:
+    """校验抽取结果的字段完整性与类型，返回错误描述列表（空列表=合格）。"""
+    if not isinstance(data, dict):
+        return ["返回结果不是 JSON 对象"]
+
+    errors: List[str] = []
+
+    # 类型校验：仅对"存在但类型错"的字段报错（缺失由必填校验负责）
+    for f in _LIST_FIELDS:
+        if f in data and not isinstance(data[f], list):
+            errors.append(f"字段 {f} 类型应为数组（当前为 {type(data[f]).__name__}）")
+    for f in _STR_FIELDS:
+        if f in data and not isinstance(data[f], str):
+            errors.append(f"字段 {f} 类型应为字符串（当前为 {type(data[f]).__name__}）")
+
+    # 必填字段缺失校验
+    for f in _REQUIRED_FIELDS:
+        if f not in data:
+            errors.append(f"缺少必填字段 {f}")
+
+    return errors
+
+
+def _build_fix_prompt(prev_output: str, errors: List[str]) -> str:
+    """构建自修正 Prompt：把上次输出与校验错误回喂给 LLM 要求补全。"""
+    error_list = "\n".join(f"- {e}" for e in errors) or "- JSON 格式非法，无法解析"
+    return f"""你上次输出的 JSON 存在以下问题：
+{error_list}
+
+请仅修正上述问题并重新输出**完整**的 JSON（保留其余已正确的字段，不要输出任何解释或代码围栏）。
+数组字段（authors、keywords、evaluation_metrics、innovations、limitations）必须是数组格式；
+无法从论文中提取的字段请设为空字符串或空数组，但字段必须存在。
+
+你上次的输出：
+{prev_output}"""
+
+
+# ========== 方案二 2-lite 辅助函数：抽取文本按章节采样 ==========
+
+def _sample_text_for_extraction(full_text: str, sections: List[Dict[str, Any]]) -> str:
+    """为抽取拼接"覆盖全文关键部分"的文本，替代原来的 full_text[:5000]。
+
+    策略：开头（摘要/引言）+ 命中关键词的关键章节各取一段，受总预算约束；
+    无章节信息时回退为 head+tail 采样，让后半段（实验/结论）也有机会进入。
+    """
+    full_text = full_text or ""
+
+    # 无章节结构：回退 head + tail 采样，仍优于纯截头
+    if not sections:
+        if len(full_text) <= EXTRACT_TEXT_BUDGET:
+            return full_text
+        head = full_text[: EXTRACT_TEXT_BUDGET * 2 // 3]
+        tail = full_text[-(EXTRACT_TEXT_BUDGET // 3):]
+        return head + "\n...\n" + tail
+
+    parts: List[str] = []
+    used = 0
+
+    # 1) 开头：摘要/引言最集中，先占 _OPENING_BUDGET
+    opening = full_text[:_OPENING_BUDGET]
+    parts.append(opening)
+    used += len(opening)
+
+    # 2) 关键章节定向采样（方法/实验/结论/局限等）
+    for sec in sections:
+        if used >= EXTRACT_TEXT_BUDGET:
+            break
+        title = sec.get("title") or ""
+        content = sec.get("content") or ""
+        if not content:
+            continue
+        if not any(re.search(p, title, re.IGNORECASE) for p in _KEY_SECTION_PATTERNS):
+            continue
+        remain = EXTRACT_TEXT_BUDGET - used
+        take = content[: min(_PER_SECTION_BUDGET, remain)]
+        parts.append(f"\n【{title}】\n{take}")
+        used += len(take)
+
+    # 3) 预算没用满（命中章节少）：用剩余预算补开头之后的连续正文，避免遗漏
+    if used < EXTRACT_TEXT_BUDGET and len(full_text) > _OPENING_BUDGET:
+        remain = EXTRACT_TEXT_BUDGET - used
+        parts.append("\n" + full_text[_OPENING_BUDGET:_OPENING_BUDGET + remain])
+
+    return "".join(parts)

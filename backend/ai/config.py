@@ -30,8 +30,9 @@ SEARCH_CONFIG = {
     "top_k": 5,
     "score_threshold": 0.5,
     "use_hybrid": True,     # 混合检索总开关（关闭则回退纯向量，可做消融对比）
-    "use_rerank": False,    # cross-encoder 重排开关（档位2，本期占位不接模型）
-    "rerank_top_n": 10,     # 重排候选数（use_rerank 时生效）
+    "use_rerank": False,    # cross-encoder 重排开关（档位2；开启后对候选做语义精排）
+    "rerank_top_n": 10,     # 重排候选数（use_rerank 时生效，越大越慢）
+    "rerank_model": "BAAI/bge-reranker-base",  # 重排模型（base 比 large 省一半显存）
     "rrf_k": 60,            # RRF 融合常数，经验值 60
     "fetch_k": 20,          # 每路（向量/BM25）召回的候选池大小
 }

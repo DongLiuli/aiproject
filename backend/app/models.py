@@ -23,6 +23,13 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 
+def now_local():
+    """本地时间（应用为单一时区/中国 UTC+8）。展示用时间戳统一用本地时间，
+    避免存 UTC 后前端 .isoformat() 无时区信息被当本地时间显示而差 8 小时。
+    注意：JWT 过期时间仍用 UTC（见 auth.py / admin.py），勿改。"""
+    return datetime.now()
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -40,7 +47,7 @@ class User(Base):
     is_anonymous = Column(Boolean, default=False)
     api_key_encrypted = Column(Text, nullable=True)
     model_preference = Column(String(100), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
 
     # 关联
     papers = relationship("Paper", back_populates="user")
@@ -61,7 +68,7 @@ class Admin(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
 
     def to_dict(self):
         return {
@@ -81,7 +88,7 @@ class Paper(Base):
     file_name = Column(String(500), nullable=False)
     file_size = Column(Integer, nullable=False)
     file_path = Column(String(1000), nullable=False)
-    upload_time = Column(DateTime, default=datetime.utcnow)
+    upload_time = Column(DateTime, default=now_local)
     parse_status = Column(String(20), default="pending")  # pending / parsing / completed / failed
     parse_error = Column(Text, nullable=True)
     field = Column(String(200), nullable=True)       # 学科方向
@@ -134,7 +141,7 @@ class PaperStructuredInfo(Base):
     references = Column(JSON, nullable=True)        # list[dict]
     full_text = Column(LONGTEXT, nullable=True)  # 提取的原文文本
     sections = Column(JSON, nullable=True)          # list[dict]
-    extracted_at = Column(DateTime, default=datetime.utcnow)
+    extracted_at = Column(DateTime, default=now_local)
 
     paper = relationship("Paper", back_populates="structured_info")
 
@@ -188,7 +195,7 @@ class Conversation(Base):
     conversation_id = Column(String(36), primary_key=True, default=generate_uuid)
     paper_id = Column(String(36), ForeignKey("papers.paper_id"), nullable=False)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
 
     paper = relationship("Paper", back_populates="conversations")
     user = relationship("User", back_populates="conversations")
@@ -203,7 +210,7 @@ class Message(Base):
     role = Column(String(20), nullable=False)  # user / assistant
     content = Column(Text, nullable=False)
     sources = Column(JSON, nullable=True)  # list[dict] — 仅 assistant 消息有
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
 
     conversation = relationship("Conversation", back_populates="messages")
 
@@ -217,4 +224,4 @@ class Report(Base):
     report_type = Column(String(20), nullable=False)  # quick / method / experiment
     content = Column(Text, nullable=False)
     format = Column(String(20), default="markdown")
-    generated_at = Column(DateTime, default=datetime.utcnow)
+    generated_at = Column(DateTime, default=now_local)
