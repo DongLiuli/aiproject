@@ -1,10 +1,11 @@
 """结构化信息抽取模块"""
 import json
 import re
+import os
+import logging
 from typing import Dict, List, Any, Optional
 from .llm_client import LLMClient
-from .config import PROMPTS_DIR
-import os
+from .config import PROMPTS_DIR, VECTOR_DIR, EXTRACT_CONFIG
 
 
 # ========== 方案三：抽取结果 Schema 校验 + 自修正 ==========
@@ -44,18 +45,44 @@ _KEY_SECTION_PATTERNS = [
     r"limitation|future|局限|不足|展望|未来",
 ]
 
+# ========== 方案2A：检索式抽取 —— 按字段主题检索选材 ==========
 
-def extract_structured_info(full_text: str, sections: List[Dict[str, Any]], llm_client: LLMClient) -> Dict[str, Any]:
+# 每类字段的检索查询词（仿 report_generator.QUERY_TERMS 结构，面向抽取字段）
+_EXTRACT_QUERY_TERMS = {
+    "background": {
+        "zh": ["研究背景", "研究动机", "引言", "问题"],
+        "en": ["background", "motivation", "introduction", "problem"],
+    },
+    "method": {
+        "zh": ["方法", "模型", "算法", "框架"],
+        "en": ["method", "approach", "model", "architecture"],
+    },
+    "experiment": {
+        "zh": ["实验", "结果", "数据集", "评估指标"],
+        "en": ["experiment", "results", "dataset", "evaluation metrics"],
+    },
+    "limitation": {
+        "zh": ["局限性", "不足", "未来工作", "结论"],
+        "en": ["limitation", "future work", "conclusion"],
+    },
+}
+
+
+def extract_structured_info(full_text: str, sections: List[Dict[str, Any]], llm_client: LLMClient,
+                            chunks_data: Optional[List[Dict[str, Any]]] = None,
+                            paper_id: Optional[str] = None) -> Dict[str, Any]:
     """
     从论文文本中抽取结构化信息
-    
+
     :param full_text: 全文文本
     :param sections: 章节列表
     :param llm_client: LLM 客户端
+    :param chunks_data: 分块数据（方案2A 检索式抽取用；为空则降级方案二采样）
+    :param paper_id: 论文 ID（方案2A 检索需要，用于定位 FAISS 索引）
     :return: 结构化信息字典
     """
-    # 构建提取 Prompt
-    prompt = _build_extraction_prompt(full_text, sections)
+    # 构建提取 Prompt（检索式或采样，见 _build_extraction_prompt）
+    prompt = _build_extraction_prompt(full_text, sections, chunks_data, paper_id)
 
     last_content = ""
     errors: List[str] = []
@@ -82,7 +109,9 @@ def extract_structured_info(full_text: str, sections: List[Dict[str, Any]], llm_
     return structured_data
 
 
-def _build_extraction_prompt(full_text: str, sections: List[Dict[str, Any]]) -> str:
+def _build_extraction_prompt(full_text: str, sections: List[Dict[str, Any]],
+                             chunks_data: Optional[List[Dict[str, Any]]] = None,
+                             paper_id: Optional[str] = None) -> str:
     """构建信息抽取 Prompt"""
     prompt_path = os.path.join(PROMPTS_DIR, "extraction.txt")
     
@@ -128,11 +157,15 @@ def _build_extraction_prompt(full_text: str, sections: List[Dict[str, Any]]) -> 
     # 获取章节摘要
     section_summary = "\n".join([f"- {s['title']}: {s['content'][:200]}..." for s in sections[:5]])
 
-    # 方案二 2-lite：按章节定向采样，覆盖全文关键部分（不再只取开头 5000 字）
-    sampled_text = _sample_text_for_extraction(full_text, sections)
+    # 选材：方案2A 检索式（有分块+索引时）优先，否则降级方案二 2-lite 采样
+    index_ready = bool(paper_id) and os.path.exists(os.path.join(VECTOR_DIR, f"{paper_id}.index"))
+    if EXTRACT_CONFIG.get("mode") == "retrieval" and chunks_data and index_ready:
+        body_text = _retrieve_text_for_extraction(paper_id, full_text, chunks_data)
+    else:
+        body_text = _sample_text_for_extraction(full_text, sections)
 
     prompt = prompt_template.format(
-        full_text=sampled_text,
+        full_text=body_text,
         sections=section_summary
     )
 
@@ -315,3 +348,64 @@ def _sample_text_for_extraction(full_text: str, sections: List[Dict[str, Any]]) 
         parts.append("\n" + full_text[_OPENING_BUDGET:_OPENING_BUDGET + remain])
 
     return "".join(parts)
+
+
+# ========== 方案2A 辅助函数：检索式抽取选材 ==========
+
+def _retrieve_text_for_extraction(paper_id: str, full_text: str,
+                                  chunks_data: List[Dict[str, Any]]) -> str:
+    """方案2A：按字段主题检索最相关分块拼上下文，替代"截头/采样"。
+
+    组成：开头保底块（标题/作者/摘要）+ 背景/方法/实验/局限四类各检索 top-k 的去重片段，
+    受 retrieval_budget 约束。检索为本地计算（向量+BM25），不额外增加 LLM 调用。
+    任何异常都回退到方案二采样，保证不阻断抽取。
+    """
+    full_text = full_text or ""
+    try:
+        from .knowledge_base import search_chunks  # 懒导入，避免循环依赖
+        from .report_generator import detect_language
+
+        budget = EXTRACT_CONFIG.get("retrieval_budget", 12000)
+        per_k = EXTRACT_CONFIG.get("per_query_k", 3)
+        opening_chars = EXTRACT_CONFIG.get("opening_chars", 2000)
+
+        lang = detect_language(full_text)
+        parts: List[str] = []
+        used = 0
+
+        # 1) 开头保底块：标题/作者/摘要通常在此，规避 sections 缺开头的问题
+        opening = full_text[:opening_chars]
+        if opening:
+            parts.append(opening)
+            used += len(opening)
+
+        # 2) 四类字段各检索 top-k，按 content 去重后拼接
+        seen = set()
+        for category, terms in _EXTRACT_QUERY_TERMS.items():
+            if used >= budget:
+                break
+            query = " ".join(terms["zh"] + terms["en"] if lang == "zh" else terms["en"])
+            try:
+                hits = search_chunks(paper_id, query, per_k, chunks_data=chunks_data)
+            except Exception as e:
+                logging.warning(f"[检索式抽取] {category} 检索失败: {e}")
+                continue
+            for h in hits:
+                content = (h.get("content") or "").strip()
+                key = content[:80]
+                if not content or key in seen:
+                    continue
+                seen.add(key)
+                remain = budget - used
+                if remain <= 0:
+                    break
+                take = content[:remain]
+                parts.append(f"\n【{category}】\n{take}")
+                used += len(take)
+
+        text = "".join(parts).strip()
+        # 检索没拿到有效片段（如空库）→ 回退采样
+        return text if text else _sample_text_for_extraction(full_text, [])
+    except Exception as e:
+        logging.warning(f"[检索式抽取] 整体失败，回退采样: {e}")
+        return _sample_text_for_extraction(full_text, [])

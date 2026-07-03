@@ -365,12 +365,24 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         if not paper:
             return
 
+        # 先取出后续要用的字段：commit 后 expire_on_commit 会过期实例属性，
+        # 再访问 paper.file_path 会触发惰性重载；若解析途中论文被 delete_paper 删掉，
+        # 该行已不存在 → ObjectDeletedError。用本地变量规避这一次重载。
+        file_path = paper.file_path
         paper.parse_status = "parsing"
         db.commit()
 
+        # #1 幂等清理：删本论文旧的结构化信息/分块/向量索引，避免重解析时
+        #    PaperStructuredInfo.paper_id 唯一约束冲突、chunks 叠加与 FAISS 错位。
+        db.query(Chunk).filter(Chunk.paper_id == paper_id).delete()
+        db.query(PaperStructuredInfo).filter(PaperStructuredInfo.paper_id == paper_id).delete()
+        db.commit()
+        from ai.knowledge_base import delete_index
+        delete_index(paper_id)
+
         # ① PDF 文本提取
         from ai.pdf_parser import parse_pdf
-        parse_result = parse_pdf(paper.file_path)
+        parse_result = parse_pdf(file_path)
         if not parse_result.get("success"):
             paper.parse_status = "failed"
             paper.parse_error = parse_result.get("error", "PDF 解析失败")
@@ -396,16 +408,42 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         from ai.llm_client import LLMClient
         llm_client = LLMClient(api_key=api_key, provider=provider)
 
-        # ③ 结构化信息抽取
+        # ③ 知识库构建（方案2A：提前到抽取之前，供检索式抽取按字段选材）
+        from ai.knowledge_base import build_knowledge_base
+        kb_result = build_knowledge_base(paper_id, sections)
+        chunks_for_db = None
+        kb_warning = None
+        if kb_result.get("success"):
+            chunks_for_db = kb_result.get("chunks", [])
+            # 将分块数据写入 chunks 表，供 search_chunks 检索
+            for c in chunks_for_db:
+                chunk = Chunk(
+                    paper_id=c["paper_id"],
+                    section_title=(c.get("section_title") or "")[:500],  # 防越界 VARCHAR(500)
+                    page_number=c["page_number"],
+                    paragraph_index=c["paragraph_index"],
+                    content=c["content"],
+                )
+                db.add(chunk)
+            db.commit()
+        else:
+            # 建库失败：抽取自动降级为采样模式（chunks_for_db=None），不阻断解析
+            logger.warning(f"知识库构建警告: {kb_result.get('error')}")
+            kb_warning = kb_result.get("error")
+
+        # ④ 结构化信息抽取（方案2A：检索式，传入 chunks_data + paper_id；无库时降级采样）
         from ai.info_extractor import extract_structured_info
-        info_data = extract_structured_info(full_text, sections, llm_client)
+        info_data = extract_structured_info(
+            full_text, sections, llm_client,
+            chunks_data=chunks_for_db, paper_id=paper_id,
+        )
         if not info_data.get("success"):
             paper.parse_status = "failed"
             paper.parse_error = info_data.get("error", "信息抽取失败")
             db.commit()
             return
 
-        # ④ 入库（list/dict 字段用 json.dumps 序列化，兼容 Text 列）
+        # ⑤ 入库（list/dict 字段用 json.dumps 序列化，兼容 Text 列）
         def _safe_json(val):
             """如果不是字符串也不是 None，序列化为 JSON 字符串"""
             if val is None or isinstance(val, str):
@@ -435,27 +473,9 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         paper.title = title
         if authors:
             paper.authors = authors
-        db.commit()
-
-        # ⑤ 知识库构建
-        from ai.knowledge_base import build_knowledge_base
-        kb_result = build_knowledge_base(paper_id, sections)
-        if kb_result.get("success"):
-            # 将分块数据写入 chunks 表，供 search_chunks 检索
-            for c in kb_result.get("chunks", []):
-                chunk = Chunk(
-                    paper_id=c["paper_id"],
-                    section_title=(c.get("section_title") or "")[:500],  # 防越界 VARCHAR(500)
-                    page_number=c["page_number"],
-                    paragraph_index=c["paragraph_index"],
-                    content=c["content"],
-                )
-                db.add(chunk)
-            paper.parse_status = "completed"
-        else:
-            logger.warning(f"知识库构建警告: {kb_result.get('error')}")
-            paper.parse_status = "completed"
-            paper.parse_error = f"知识库部分: {kb_result.get('error')}"
+        paper.parse_status = "completed"
+        if kb_warning:
+            paper.parse_error = f"知识库部分: {kb_warning}"
         db.commit()
 
     except Exception as e:

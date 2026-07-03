@@ -37,6 +37,14 @@ SEARCH_CONFIG = {
     "fetch_k": 20,          # 每路（向量/BM25）召回的候选池大小
 }
 
+# 结构化抽取配置（方案2A：检索式抽取 vs 方案二 2-lite 采样）
+EXTRACT_CONFIG = {
+    "mode": "retrieval",     # "retrieval"=方案2A检索式(默认) | "sample"=方案二2-lite采样(降级/消融)
+    "per_query_k": 3,        # 每类字段（背景/方法/实验/局限）检索的块数
+    "opening_chars": 2000,   # 保底纳入的开头字符数（覆盖标题/作者/摘要）
+    "retrieval_budget": 12000,  # 检索式拼接的总字符预算
+}
+
 # 路径配置
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
