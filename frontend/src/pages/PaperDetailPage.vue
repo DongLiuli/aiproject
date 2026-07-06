@@ -21,6 +21,14 @@ const papersStore = usePapersStore()
 const rightTab = ref('qa')
 const paperId = computed(() => route.params.id)
 const paper = computed(() => papersStore.currentPaper)
+const paperContentRef = ref(null)
+
+function handleScrollToSection(pageNumber, sectionTitle) {
+  if (paperContentRef.value) {
+    paperContentRef.value.scrollToSection(pageNumber, sectionTitle)
+  }
+}
+
 onMounted(async () => {
   if (!paperId.value) return
   try {
@@ -100,7 +108,7 @@ const formatSize = (bytes) => {
 
       <div class="detail-content">
         <div class="left-pane">
-          <PaperContent :paper="paper" />
+          <PaperContent ref="paperContentRef" :paper="paper" />
         </div>
 
         <div class="right-pane">
@@ -128,6 +136,7 @@ const formatSize = (bytes) => {
             class="pane-body"
             :paper-id="paperId"
             :parse-status="paper.parse_status"
+            @scroll-to-section="handleScrollToSection"
           />
           <ReportPanel
             v-show="rightTab === 'report'"
