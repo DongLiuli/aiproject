@@ -1,108 +1,158 @@
-<script setup>import { ref, watch, nextTick, computed } from 'vue';
-import { useQAStore } from '@/stores/papers';
-import { Send, Loader2, MessageSquare, FileText } from 'lucide-vue-next';
+<script setup>
+import { ref, watch, nextTick, computed } from 'vue'
+import { useQAStore } from '@/stores/papers'
+import { Send, Loader2, MessageSquare, FileText, Link } from 'lucide-vue-next'
+import { marked } from 'marked'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+
 const props = defineProps({
- paperId: {
- type: String,
- required: true
- },
- parseStatus: {
- type: String,
- default: ''
- }
-});
-const canAsk = computed(() => props.parseStatus === 'completed');
-const qaStore = useQAStore();
-const question = ref('');
-const messages = ref([]);
-const messagesEl = ref(null);
+  paperId: {
+    type: String,
+    required: true
+  },
+  parseStatus: {
+    type: String,
+    default: ''
+  }
+})
+
+const emit = defineEmits(['scroll-to-section'])
+
+const canAsk = computed(() => props.parseStatus === 'completed')
+const qaStore = useQAStore()
+const question = ref('')
+const messages = ref([])
+const messagesEl = ref(null)
+
+marked.setOptions({
+  breaks: true,
+  gfm: true
+})
+
+function renderContent(text) {
+  if (!text) return ''
+  
+  let html = marked.parse(text)
+  
+  html = html.replace(/\$\$(.+?)\$\$/g, (match, formula) => {
+    try {
+      return katex.renderToString(formula.trim(), {
+        throwOnError: false,
+        displayMode: true
+      })
+    } catch (e) {
+      return `<code>${formula}</code>`
+    }
+  })
+  
+  html = html.replace(/\$(.+?)\$/g, (match, formula) => {
+    try {
+      return katex.renderToString(formula.trim(), {
+        throwOnError: false,
+        displayMode: false
+      })
+    } catch (e) {
+      return `<code>${formula}</code>`
+    }
+  })
+  
+  return html
+}
+
+function scrollToSection(source) {
+  emit('scroll-to-section', source.page, source.section)
+}
+
 watch(() => props.paperId, async (newId) => {
- if (newId) {
- await loadHistory();
- }
-}, { immediate: true });
+  if (newId) {
+    await loadHistory()
+  }
+}, { immediate: true })
+
 function scrollToBottom() {
- nextTick(() => {
- const el = messagesEl.value;
- if (el) el.scrollTop = el.scrollHeight;
- });
+  nextTick(() => {
+    const el = messagesEl.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
 }
+
 async function loadHistory() {
- try {
- const conversations = await qaStore.getConversationHistory(props.paperId);
- // 接口按 created_at 倒序返回对话，反转为正序（最早的在最上面）
- const ordered = [...(conversations || [])].reverse();
- const flat = [];
- for (const conv of ordered) {
- let pending = null;
- for (const m of conv.messages || []) {
- if (m.role === 'user') {
- if (pending) flat.push(pending);
- pending = { question: m.content, answer: null, sources: [], timestamp: m.created_at };
- } else if (m.role === 'assistant') {
- if (pending) {
- pending.answer = m.content;
- pending.sources = m.sources || [];
- pending.timestamp = m.created_at;
- flat.push(pending);
- pending = null;
- } else {
- flat.push({ question: '', answer: m.content, sources: m.sources || [], timestamp: m.created_at });
- }
- }
- }
- if (pending) flat.push(pending);
- }
- messages.value = flat;
- scrollToBottom();
- }
- catch (err) {
- console.error('Failed to load history:', err);
- }
+  try {
+    const conversations = await qaStore.getConversationHistory(props.paperId)
+    const ordered = [...(conversations || [])].reverse()
+    const flat = []
+    for (const conv of ordered) {
+      let pending = null
+      for (const m of conv.messages || []) {
+        if (m.role === 'user') {
+          if (pending) flat.push(pending)
+          pending = { question: m.content, answer: null, sources: [], timestamp: m.created_at }
+        } else if (m.role === 'assistant') {
+          if (pending) {
+            pending.answer = m.content
+            pending.sources = m.sources || []
+            pending.timestamp = m.created_at
+            flat.push(pending)
+            pending = null
+          } else {
+            flat.push({ question: '', answer: m.content, sources: m.sources || [], timestamp: m.created_at })
+          }
+        }
+      }
+      if (pending) flat.push(pending)
+    }
+    messages.value = flat
+    scrollToBottom()
+  }
+  catch (err) {
+    console.error('Failed to load history:', err)
+  }
 }
+
 async function sendQuestion() {
- if (!question.value.trim() || qaStore.answering || !canAsk.value)
- return;
- const newQuestion = question.value.trim();
- messages.value.push({
- question: newQuestion,
- answer: '',
- sources: [],
- loading: true
- });
- const index = messages.value.length - 1;
- question.value = '';
- scrollToBottom();
- try {
- await qaStore.askQuestionStream(props.paperId, newQuestion, {
- onSources: (sources) => {
- messages.value[index].sources = sources;
- },
- onDelta: (fullAnswer) => {
- // 首个增量到达即结束「正在思考」，逐字渲染
- messages.value[index].loading = false;
- messages.value[index].answer = fullAnswer;
- scrollToBottom();
- },
- });
- messages.value[index].loading = false;
- messages.value[index].timestamp = new Date().toISOString();
- scrollToBottom();
- }
- catch (err) {
- messages.value[index] = {
- question: newQuestion,
- answer: err.userMessage || '抱歉，回答失败，请重试',
- sources: [],
- error: true
- };
- }
+  if (!question.value.trim() || qaStore.answering || !canAsk.value)
+    return
+  const newQuestion = question.value.trim()
+  messages.value.push({
+    question: newQuestion,
+    answer: '',
+    sources: [],
+    loading: true
+  })
+  const index = messages.value.length - 1
+  question.value = ''
+  scrollToBottom()
+  try {
+    await qaStore.askQuestionStream(props.paperId, newQuestion, {
+      onSources: (sources) => {
+        messages.value[index].sources = sources
+      },
+      onDelta: (fullAnswer) => {
+        messages.value[index].loading = false
+        messages.value[index].answer = fullAnswer
+        scrollToBottom()
+      },
+    })
+    messages.value[index].loading = false
+    messages.value[index].timestamp = new Date().toISOString()
+    scrollToBottom()
+  }
+  catch (err) {
+    messages.value[index] = {
+      question: newQuestion,
+      answer: err.userMessage || '抱歉，回答失败，请重试',
+      sources: [],
+      error: true
+    }
+  }
 }
+
 function formatDate(dateStr) {
- if (!dateStr)
- return '';
- const date = new Date(dateStr);
- return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  if (!dateStr)
+    return ''
+  const date = new Date(dateStr)
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 </script>
 
@@ -141,7 +191,7 @@ function formatDate(dateStr) {
             <div class="answer-header">
               <span class="answer-label">回答</span>
             </div>
-            <p>{{ msg.answer }}</p>
+            <div class="answer-content" v-html="renderContent(msg.answer)"></div>
             
             <div v-if="msg.sources && msg.sources.length > 0" class="answer-sources">
               <div class="sources-header">
@@ -149,9 +199,17 @@ function formatDate(dateStr) {
                 <span>来源</span>
               </div>
               <ul class="sources-list">
-                <li v-for="(source, idx) in msg.sources" :key="idx">
-                  {{ source.page ? `第 ${source.page} 页` : '' }}
-                  <span v-if="source.text">{{ source.text.substring(0, 50) }}...</span>
+                <li v-for="(source, idx) in msg.sources" :key="idx" class="source-item">
+                  <button 
+                    class="source-link" 
+                    @click="scrollToSection(source)"
+                    :title="source.section ? `跳转到${source.section}` : `跳转到第${source.page}页`"
+                  >
+                    <Link class="link-icon" />
+                    <span class="source-page">{{ source.page ? `第 ${source.page} 页` : '' }}</span>
+                    <span v-if="source.section" class="source-section">{{ source.section }}</span>
+                  </button>
+                  <span v-if="source.text" class="source-snippet">{{ source.text.substring(0, 80) }}...</span>
                 </li>
               </ul>
             </div>
@@ -311,14 +369,89 @@ function formatDate(dateStr) {
   color: #10b981;
 }
 
-.message-answer p {
+.answer-content {
   font-size: 0.9375rem;
   line-height: 1.8;
   color: #333;
-  white-space: pre-wrap;
 }
 
-.answer-error p {
+.answer-content :deep(pre) {
+  background: #f5f7fa;
+  padding: 12px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.875rem;
+}
+
+.answer-content :deep(code) {
+  background: #f5f7fa;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.answer-content :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+
+.answer-content :deep(blockquote) {
+  border-left: 3px solid #667eea;
+  padding-left: 12px;
+  margin: 12px 0;
+  color: #666;
+}
+
+.answer-content :deep(h1),
+.answer-content :deep(h2),
+.answer-content :deep(h3) {
+  margin: 16px 0 8px;
+  font-weight: 600;
+}
+
+.answer-content :deep(h1) { font-size: 1.25rem; }
+.answer-content :deep(h2) { font-size: 1.125rem; }
+.answer-content :deep(h3) { font-size: 1rem; }
+
+.answer-content :deep(ul),
+.answer-content :deep(ol) {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.answer-content :deep(li) {
+  margin: 4px 0;
+}
+
+.answer-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+.answer-content :deep(th),
+.answer-content :deep(td) {
+  border: 1px solid #e0e0e0;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 0.875rem;
+}
+
+.answer-content :deep(th) {
+  background: #f5f7fa;
+  font-weight: 600;
+}
+
+.answer-content :deep(.katex) {
+  font-size: 1.1em;
+}
+
+.answer-content :deep(.katex-display) {
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+.answer-error .answer-content {
   color: #ef4444;
 }
 
@@ -346,13 +479,58 @@ function formatDate(dateStr) {
 
 .sources-list {
   margin: 0;
-  padding-left: 16px;
+  padding-left: 0;
+  list-style: none;
 }
 
-.sources-list li {
+.source-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px dashed #e0e0e0;
+}
+
+.source-item:last-child {
+  border-bottom: none;
+}
+
+.source-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: #667eea;
+  font-size: 0.875rem;
+  transition: color 0.2s;
+}
+
+.source-link:hover {
+  color: #764ba2;
+}
+
+.link-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.source-page {
+  font-weight: 500;
+}
+
+.source-section {
+  color: #999;
+  font-size: 0.8125rem;
+}
+
+.source-snippet {
   font-size: 0.8125rem;
   color: #999;
-  line-height: 1.6;
+  line-height: 1.5;
+  padding-left: 20px;
 }
 
 .qa-locked-hint {
