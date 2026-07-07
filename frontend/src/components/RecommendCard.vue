@@ -59,7 +59,8 @@ function handleClick() {
 
     <p class="card-author">{{ authorLine }}</p>
 
-    <div class="reason-pill" v-if="reason">
+    <!-- admin 卡已有「精选」徽章，不再重复显示「管理员精选」理由胶囊 -->
+    <div class="reason-pill" v-if="reason && source !== 'admin'">
       <Lightbulb class="reason-icon" />
       <span>{{ reason }}</span>
     </div>

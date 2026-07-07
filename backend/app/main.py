@@ -21,6 +21,7 @@ from .api.qa import router as qa_router
 from .api.reports import router as reports_router
 from .api.admin import router as admin_router, init_default_admin, init_system_user
 from .api.graph import router as graph_router
+from .api.search import router as search_router
 
 app = FastAPI(title="科研文献智能解析与知识服务系统", version="0.1.0")
 
@@ -57,6 +58,7 @@ app.include_router(qa_router)
 app.include_router(reports_router)
 app.include_router(admin_router)
 app.include_router(graph_router)
+app.include_router(search_router)
 
 
 # 管理端前端页面（内嵌静态 HTML，不依赖 Vue 前端项目）

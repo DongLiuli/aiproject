@@ -37,6 +37,16 @@ SEARCH_CONFIG = {
     "fetch_k": 20,          # 每路（向量/BM25）召回的候选池大小
 }
 
+# 学术搜索配置（OpenAlex，功能：学术搜索工作区）
+ACADEMIC_CONFIG = {
+    "api_base": "https://api.openalex.org/works",
+    "per_page": 10,       # 一页锁定展示的论文数
+    "fetch_k": 25,        # 相关度召回候选池（再按 cited_by_count 重排取 per_page）
+    "timeout": 20,        # OpenAlex 请求超时（秒）
+    "abstract_max": 1500, # 综述上下文里每篇摘要的截断字符数
+    "topics_per_paper": 2,  # 主题聚类图里每篇论文取的 top 主题数
+}
+
 # 结构化抽取配置（方案2A：检索式抽取 vs 方案二 2-lite 采样）
 EXTRACT_CONFIG = {
     "mode": "retrieval",     # "retrieval"=方案2A检索式(默认) | "sample"=方案二2-lite采样(降级/消融)

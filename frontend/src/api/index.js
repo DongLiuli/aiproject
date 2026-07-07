@@ -287,4 +287,15 @@ export const reportsAPI = {
   },
 }
 
+export const searchAPI = {
+  // 学术搜索：联网检索 + 综述 + 主题图表。返回 { answer, notice, sources, chart, page, query_used }
+  query(q, page = 1, sort = 'citation') {
+    return api.post('/api/search', { query: q, page, sort })
+  },
+  // 把开放获取论文加入知识库（单篇/批量）。返回 { added, failed }
+  addToLibrary(papers) {
+    return api.post('/api/search/add-to-library', { papers })
+  },
+}
+
 export default api

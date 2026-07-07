@@ -10,6 +10,10 @@ export const usePapersStore = defineStore('papers', () => {
   const pollingPaperId = ref(null)
   const pdfCache = ref(new Map())
   let pollInterval = null
+  // 多篇并行轮询（学术搜索批量加入知识库用）：单个 interval 轮询一组 paper_id，
+  // 命中终态就从集合移除，集合空则整体停止。与单篇 startPolling 互不干扰。
+  const pendingPollIds = ref(new Set())
+  let manyPollInterval = null
 
   function startPolling(paperId) {
     stopPolling()
@@ -40,6 +44,49 @@ export const usePapersStore = defineStore('papers', () => {
       pollInterval = null
     }
     pollingPaperId.value = null
+  }
+
+  // 并行轮询多篇论文状态，直到全部到达终态（completed/failed）。
+  // 放在 store（全局）里，跨路由存活——从搜索页跳到 /library 后仍持续刷新卡片状态。
+  function startPollingMany(paperIds) {
+    const ids = (paperIds || []).filter(Boolean)
+    if (!ids.length) return
+    ids.forEach((id) => pendingPollIds.value.add(id))
+    if (manyPollInterval) return // 已在轮询，新 id 已并入集合，无需重开
+
+    manyPollInterval = setInterval(async () => {
+      // 拷贝一份遍历，回调里可安全增删原集合
+      const targets = Array.from(pendingPollIds.value)
+      for (const id of targets) {
+        try {
+          const response = await papersAPI.get(id)
+          const paper = response.items || response
+          const index = papers.value.findIndex((p) => p.paper_id === id)
+          if (index !== -1) {
+            papers.value[index] = paper
+          }
+          if (currentPaper.value?.paper_id === id) {
+            currentPaper.value = paper
+          }
+          if (paper.parse_status === 'completed' || paper.parse_status === 'failed') {
+            pendingPollIds.value.delete(id)
+          }
+        } catch (error) {
+          console.error('Polling error:', error)
+        }
+      }
+      if (pendingPollIds.value.size === 0) {
+        stopPollingMany()
+      }
+    }, 3000)
+  }
+
+  function stopPollingMany() {
+    if (manyPollInterval) {
+      clearInterval(manyPollInterval)
+      manyPollInterval = null
+    }
+    pendingPollIds.value.clear()
   }
 
   function cachePdf(paperId, file) {
@@ -190,6 +237,8 @@ export const usePapersStore = defineStore('papers', () => {
     reparsePaper,
     startPolling,
     stopPolling,
+    startPollingMany,
+    stopPollingMany,
     cachePdf,
     getCachedPdf,
     clearPdfCache,

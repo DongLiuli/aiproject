@@ -1,0 +1,5 @@
+{
+  "_comment": "OpenAlex 学术检索配置。匿名即可用，此文件可选。复制为 openalex_config.json 后填写；已 gitignore，勿提交真实 key。OPENALEX_API_KEY 留空则匿名请求；OPENALEX_MAILTO 建议填你的联系邮箱（礼貌池，放进 User-Agent）。",
+  "OPENALEX_API_KEY": "",
+  "OPENALEX_MAILTO": "you@example.com"
+}

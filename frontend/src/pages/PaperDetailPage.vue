@@ -38,7 +38,7 @@ onMounted(async () => {
   }
 })
 function goBack() {
-  router.push('/')
+  router.push('/library')
 }
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
