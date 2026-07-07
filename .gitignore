@@ -227,4 +227,8 @@ backend/data/
 backend/db_config.json
 # OpenAlex 学术检索 key（每人本地填 openalex_config.json，勿提交；示例文件 openalex_config.example.json 作模板）
 backend/openalex_config.json
+# 推荐池专用 LLM key（每人本地填 pool_config.json，勿提交；示例 pool_config.example.json 作模板）
+backend/pool_config.json
+# 标签别名沉淀文件（运行时自动生长，属运行数据）
+backend/data/tag_aliases.json
 doc/plantuml/

@@ -90,7 +90,35 @@ tr:hover { background:#f9fafb; }
 .form-row input, .form-row textarea { flex:1; padding:6px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:0.8125rem; }
 .form-row textarea { min-height:60px; font-family:monospace; }
 .pagination .btn { padding:4px 10px; font-size:0.75rem; }
+
+/* ===== 数据可视化仪表盘（浅色，仅系统统计页） ===== */
+.dashboard-neuron { background:#f0f2f5; margin:-32px; padding:32px; min-height:calc(100vh - 57px); }
+.dashboard-neuron .dash-title { color:#1a1a2e; font-size:1.15rem; font-weight:600; margin-bottom:20px; display:flex; align-items:center; gap:10px; letter-spacing:0.5px; }
+.dashboard-neuron .dash-title::before { content:''; width:10px; height:10px; border-radius:50%; background:#4f46e5; box-shadow:0 0 8px 2px rgba(79,70,229,0.35); }
+.dash-kpi-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; margin-bottom:20px; }
+.dash-card { background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:18px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.08); position:relative; overflow:hidden; }
+.dash-card::after { content:''; position:absolute; top:-40%; right:-20%; width:180px; height:180px; background:radial-gradient(circle, rgba(79,70,229,0.06), transparent 70%); pointer-events:none; }
+.kpi-card .kpi-label { color:#6b7280; font-size:0.8rem; margin-bottom:6px; }
+.kpi-card .kpi-value { font-size:2rem; font-weight:700; color:#4f46e5; line-height:1.1; }
+.kpi-card .kpi-delta { font-size:0.78rem; margin-top:4px; font-weight:600; }
+.kpi-card .kpi-delta.up { color:#16a34a; }
+.kpi-card .kpi-delta.down { color:#dc2626; }
+.kpi-card .kpi-delta.flat { color:#9ca3af; }
+.kpi-card .kpi-spark { height:38px; width:100%; margin-top:8px; }
+.dash-trend-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; flex-wrap:wrap; gap:10px; }
+.dash-trend-head h4 { color:#1a1a2e; font-size:1rem; font-weight:600; }
+.range-btns { display:flex; gap:6px; }
+.range-btn { padding:5px 14px; border:1px solid #d1d5db; background:transparent; color:#6b7280; border-radius:20px; cursor:pointer; font-size:0.78rem; transition:all 0.15s; }
+.range-btn:hover { border-color:#4f46e5; color:#4f46e5; }
+.range-btn.active { background:#4f46e5; color:#fff; border-color:transparent; }
+.dash-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px; margin-top:20px; }
+.dash-grid .dash-card h4 { color:#1a1a2e; font-size:0.95rem; font-weight:600; margin-bottom:8px; }
+.chart-lg { height:320px; width:100%; }
+.chart-md { height:260px; width:100%; }
+.storage-legend { margin-top:12px; font-size:0.8rem; color:#6b7280; line-height:1.7; }
+.storage-legend .dot { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:middle; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
 <div class="header">
@@ -214,31 +242,278 @@ function switchTab(tab, el) {
 
 async function renderTab() {
   const c = document.getElementById('tabContent');
-  if (currentTab === 'stats') c.innerHTML = await renderStats();
+  if (currentTab === 'stats') { c.innerHTML = renderStats(); await initDashboard(); }
   else if (currentTab === 'papers') c.innerHTML = await renderPapers();
   else if (currentTab === 'recommend') c.innerHTML = await renderRecommend();
   else if (currentTab === 'users') c.innerHTML = await renderUsers();
   else if (currentTab === 'db') { c.innerHTML = await renderDB(); await renderDBSubContent(); }
 }
 
-async function renderStats() {
-  try {
-    const d = await api('GET', '/api/admin/stats');
-    return `
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value">${d.papers.total}</div><div class="stat-label">论文总数</div></div>
-        <div class="stat-card success"><div class="stat-value">${d.papers.completed}</div><div class="stat-label">已完成</div></div>
-        <div class="stat-card danger"><div class="stat-value">${d.papers.failed}</div><div class="stat-label">失败</div></div>
-        <div class="stat-card"><div class="stat-value">${d.users.total_registered}</div><div class="stat-label">注册用户</div></div>
-        <div class="stat-card"><div class="stat-value">${d.conversations}</div><div class="stat-label">对话数</div></div>
+// ===== 数据可视化仪表盘（浅色） =====
+const NEON = { cyan:'#0891b2', blue:'#4f46e5', blueLite:'#2563eb', purple:'#7c3aed', pink:'#db2777', green:'#16a34a', amber:'#d97706', text:'#374151', sub:'#6b7280', grid:'rgba(0,0,0,0.06)' };
+const SERIES_COLORS = [NEON.blue, NEON.cyan, NEON.green, NEON.amber, NEON.pink, NEON.purple];
+let dashCharts = [];   // 便于 tab 切换 / resize 时清理
+let dashTrendRange = 30;
+let dashResizeBound = false;
+
+function disposeDash() {
+  dashCharts.forEach(c => { try { c.dispose(); } catch(e){} });
+  dashCharts = [];
+}
+
+function renderStats() {
+  // 返回骨架，图表在 initDashboard() 内渲染
+  return `
+    <div class="dashboard-neuron">
+      <div class="dash-title">数据可视化总览</div>
+
+      <div class="dash-kpi-row" id="kpiRow">
+        ${['papers','users','conversations','messages'].map(k => `
+          <div class="dash-card kpi-card">
+            <div class="kpi-label">${({papers:'今日新增论文',users:'今日新增用户',conversations:'今日新增对话',messages:'今日新增问答'})[k]}</div>
+            <div class="kpi-value" id="kpi_${k}">—</div>
+            <div class="kpi-delta flat" id="kpidelta_${k}">对比昨日 —</div>
+            <div class="kpi-spark" id="spark_${k}"></div>
+          </div>`).join('')}
       </div>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value">${d.papers.success_rate}</div><div class="stat-label">解析成功率</div></div>
-        <div class="stat-card"><div class="stat-value">${d.storage.database_mb}</div><div class="stat-label">数据库大小</div></div>
-        <div class="stat-card"><div class="stat-value">${d.storage.uploads_mb}</div><div class="stat-label">上传文件</div></div>
-        <div class="stat-card"><div class="stat-value">${d.storage.vectors_mb}</div><div class="stat-label">向量索引</div></div>
-      </div>`;
-  } catch(e) { return `<div class="empty">加载失败: ${e.message}</div>`; }
+
+      <div class="dash-card">
+        <div class="dash-trend-head">
+          <h4>增长趋势</h4>
+          <div class="range-btns">
+            <button class="range-btn" data-range="7" onclick="setTrendRange(7)">近 7 天</button>
+            <button class="range-btn active" data-range="30" onclick="setTrendRange(30)">近 30 天</button>
+            <button class="range-btn" data-range="90" onclick="setTrendRange(90)">近 90 天</button>
+          </div>
+        </div>
+        <div class="chart-lg" id="trendChart"></div>
+      </div>
+
+      <div class="dash-grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+        <div class="dash-card"><h4>解析状态</h4><div class="chart-md" id="statusChart"></div></div>
+        <div class="dash-card"><h4>🏷️ 热门标签 Top</h4><div class="chart-md" id="tagChart"></div></div>
+        <div class="dash-card"><h4>✍️ 高产作者 Top</h4><div class="chart-md" id="authorChart"></div></div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="dash-card" style="grid-column:1/-1"><h4>🕒 系统活跃时段 <span style="font-weight:400;color:#9ca3af;font-size:0.8rem">（周几 × 小时 · 上传/问答/报告/对话）</span></h4><div id="heatmapChart" style="height:300px;width:100%"></div></div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="dash-card" style="grid-column:1/-1">
+          <h4>存储占用</h4>
+          <div class="chart-md" id="storageChart" style="height:120px"></div>
+          <div class="storage-legend" id="storageLegend"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function baseChart(el) {
+  const c = echarts.init(el, null, { renderer:'canvas' });
+  dashCharts.push(c);
+  return c;
+}
+const axisCommon = () => ({
+  axisLine:{ lineStyle:{ color:'rgba(142,163,204,0.35)' } },
+  axisLabel:{ color:NEON.sub, fontSize:11 },
+  splitLine:{ lineStyle:{ color:NEON.grid } },
+});
+const tooltipCommon = { backgroundColor:'rgba(255,255,255,0.96)', borderColor:'#e5e7eb', borderWidth:1, textStyle:{ color:NEON.text }, extraCssText:'box-shadow:0 4px 16px rgba(0,0,0,0.12);' };
+
+function fmtSize(bytes) {
+  if (!bytes) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes/1048576).toFixed(2) + ' MB';
+  return (bytes/1073741824).toFixed(2) + ' GB';
+}
+
+async function initDashboard() {
+  disposeDash();
+  if (!dashResizeBound) {
+    window.addEventListener('resize', () => dashCharts.forEach(c => { try{ c.resize(); }catch(e){} }));
+    dashResizeBound = true;
+  }
+  try {
+    const [a, ins] = await Promise.all([
+      api('GET', '/api/admin/stats/analytics'),
+      api('GET', '/api/admin/stats/insights'),
+    ]);
+    renderKPIs(a.kpi);
+    renderStatusChart(a.distribution.paper_status);
+    renderTagChart(ins.tags);
+    renderAuthorChart(ins.authors);
+    renderHeatmap(ins.heatmap, ins.heatmap_max);
+    renderStorageChart(a.storage);
+  } catch(e) {
+    document.getElementById('tabContent').innerHTML = `<div class="empty">仪表盘加载失败: ${e.message}</div>`;
+    return;
+  }
+  await loadTrend(dashTrendRange);
+}
+
+function renderKPIs(kpi) {
+  const map = { papers:'papers', users:'users', conversations:'conversations', messages:'messages' };
+  for (const k of Object.keys(map)) {
+    const item = kpi[k] || { today:0, yesterday:0, delta_pct:null };
+    document.getElementById('kpi_' + k).textContent = item.today;
+    const el = document.getElementById('kpidelta_' + k);
+    if (item.delta_pct === null) {
+      el.className = 'kpi-delta flat';
+      el.textContent = `昨日 ${item.yesterday} · —`;
+    } else {
+      const up = item.delta_pct >= 0;
+      el.className = 'kpi-delta ' + (item.delta_pct === 0 ? 'flat' : (up ? 'up' : 'down'));
+      el.textContent = `${up ? '▲' : '▼'} ${Math.abs(item.delta_pct)}%  · 昨日 ${item.yesterday}`;
+    }
+  }
+}
+
+function renderSparks(trend) {
+  const specs = [['papers', trend.papers, NEON.cyan], ['users', trend.users, NEON.purple],
+                 ['conversations', trend.conversations, NEON.green], ['messages', trend.messages, NEON.amber]];
+  for (const [k, data, color] of specs) {
+    const el = document.getElementById('spark_' + k);
+    if (!el) continue;
+    const c = baseChart(el);
+    c.setOption({
+      grid:{ left:0, right:0, top:2, bottom:2 },
+      xAxis:{ type:'category', show:false, data:data.map((_,i)=>i) },
+      yAxis:{ type:'value', show:false },
+      tooltip:{ ...tooltipCommon, trigger:'axis', formatter:p=>`${p[0].value}` },
+      series:[{ type:'line', data, smooth:true, symbol:'none',
+        lineStyle:{ color, width:2 },
+        areaStyle:{ color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:color+'66'},{offset:1,color:color+'00'}]) } }]
+    });
+  }
+}
+
+async function loadTrend(days) {
+  const t = await api('GET', '/api/admin/stats/trends?days=' + days);
+  renderSparks(t);
+  const el = document.getElementById('trendChart');
+  if (!el) return;
+  const c = baseChart(el);
+  const shortDates = t.dates.map(d => d.slice(5)); // MM-DD
+  const mk = (name, data, color) => ({
+    name, type:'line', smooth:true, symbol:'none', data,
+    lineStyle:{ color, width:2.5, shadowColor:color+'88', shadowBlur:10 },
+    areaStyle:{ color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:color+'55'},{offset:1,color:color+'02'}]) }
+  });
+  c.setOption({
+    color: SERIES_COLORS,
+    tooltip:{ ...tooltipCommon, trigger:'axis' },
+    legend:{ data:['论文','用户','对话','问答'], textStyle:{ color:NEON.sub }, top:0, icon:'roundRect' },
+    grid:{ left:12, right:18, top:36, bottom:10, containLabel:true },
+    xAxis:{ type:'category', boundaryGap:false, data:shortDates, ...axisCommon() },
+    yAxis:{ type:'value', minInterval:1, ...axisCommon() },
+    series:[ mk('论文', t.papers, NEON.cyan), mk('用户', t.users, NEON.purple),
+             mk('对话', t.conversations, NEON.green), mk('问答', t.messages, NEON.amber) ]
+  });
+}
+
+function setTrendRange(days) {
+  dashTrendRange = days;
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', +b.dataset.range === days));
+  loadTrend(days);
+}
+
+const STATUS_META = { completed:['已完成',NEON.green], failed:['失败',NEON.pink], parsing:['解析中',NEON.blueLite], pending:['待处理',NEON.amber] };
+function renderStatusChart(rows) {
+  const c = baseChart(document.getElementById('statusChart'));
+  const data = rows.map(r => ({ name:(STATUS_META[r.name]?.[0]||r.name), value:r.value,
+    itemStyle:{ color:(STATUS_META[r.name]?.[1]||NEON.blueLite) } }));
+  c.setOption({
+    tooltip:{ ...tooltipCommon, trigger:'item', formatter:'{b}: {c} ({d}%)' },
+    legend:{ bottom:0, textStyle:{ color:NEON.sub }, icon:'circle' },
+    series:[{ type:'pie', radius:['48%','72%'], center:['50%','44%'], data,
+      label:{ color:NEON.text, formatter:'{b}\n{c}' },
+      itemStyle:{ borderColor:'#fff', borderWidth:2 },
+      emphasis:{ itemStyle:{ shadowBlur:16, shadowColor:'rgba(79,70,229,0.35)' } } }]
+  });
+}
+
+function renderBarTop(elId, rows, gradFrom, gradTo, labelW) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const c = baseChart(el);
+  if (!rows || !rows.length) {
+    c.setOption({ title:{ text:'暂无数据', left:'center', top:'center',
+      textStyle:{ color:NEON.sub, fontSize:13, fontWeight:'normal' } } });
+    return;
+  }
+  const sorted = [...rows].sort((a,b)=>a.value-b.value); // 升序 → 最大排最上
+  c.setOption({
+    tooltip:{ ...tooltipCommon, trigger:'axis', axisPointer:{ type:'shadow' } },
+    grid:{ left:12, right:36, top:8, bottom:8, containLabel:true },
+    xAxis:{ type:'value', minInterval:1, ...axisCommon() },
+    yAxis:{ type:'category', data:sorted.map(r=>r.name), ...axisCommon(),
+      axisLabel:{ color:NEON.sub, fontSize:11, width:(labelW||120), overflow:'truncate' } },
+    series:[{ type:'bar', data:sorted.map(r=>r.value), barMaxWidth:18,
+      itemStyle:{ borderRadius:[0,6,6,0],
+        color:new echarts.graphic.LinearGradient(0,0,1,0,[{offset:0,color:gradFrom},{offset:1,color:gradTo}]) },
+      label:{ show:true, position:'right', color:NEON.sub } }]
+  });
+}
+function renderTagChart(rows) { renderBarTop('tagChart', rows, NEON.blue, NEON.cyan, 130); }
+function renderAuthorChart(rows) { renderBarTop('authorChart', rows, NEON.purple, NEON.pink, 130); }
+
+function renderHeatmap(data, maxv) {
+  const el = document.getElementById('heatmapChart');
+  if (!el) return;
+  const c = baseChart(el);
+  const days = ['周一','周二','周三','周四','周五','周六','周日'];
+  const hours = Array.from({length:24}, (_,i)=>i + '时');
+  if (!data || !data.length) {
+    c.setOption({ title:{ text:'暂无活动数据', left:'center', top:'center',
+      textStyle:{ color:NEON.sub, fontSize:13, fontWeight:'normal' } } });
+    return;
+  }
+  c.setOption({
+    tooltip:{ ...tooltipCommon, position:'top',
+      formatter:p=>`${days[p.value[1]]} ${p.value[0]}:00<br/>活动 <b>${p.value[2]}</b> 次` },
+    grid:{ left:8, right:8, top:10, bottom:60, containLabel:true },
+    xAxis:{ type:'category', data:hours, splitArea:{ show:true },
+      axisLabel:{ color:NEON.sub, fontSize:10, interval:1 },
+      axisLine:{ lineStyle:{ color:'rgba(0,0,0,0.15)' } } },
+    yAxis:{ type:'category', data:days, splitArea:{ show:true },
+      axisLabel:{ color:NEON.sub, fontSize:11 },
+      axisLine:{ lineStyle:{ color:'rgba(0,0,0,0.15)' } } },
+    visualMap:{ min:0, max:maxv||1, calculable:true, orient:'horizontal', left:'center', bottom:6,
+      inRange:{ color:['#eef2ff','#c7d2fe','#818cf8','#4f46e5','#312e81'] },
+      textStyle:{ color:NEON.sub } },
+    series:[{ type:'heatmap', data, label:{ show:false },
+      itemStyle:{ borderColor:'#fff', borderWidth:1 },
+      emphasis:{ itemStyle:{ shadowBlur:8, shadowColor:'rgba(79,70,229,0.5)' } } }]
+  });
+}
+
+function renderStorageChart(storage) {
+  const c = baseChart(document.getElementById('storageChart'));
+  const items = [
+    { name:'数据库', value:storage.database_bytes||0, color:NEON.cyan },
+    { name:'上传文件', value:storage.uploads_bytes||0, color:NEON.purple },
+    { name:'向量索引', value:storage.vectors_bytes||0, color:NEON.green },
+  ];
+  const total = items.reduce((s,i)=>s+i.value,0) || 1;
+  c.setOption({
+    tooltip:{ ...tooltipCommon, trigger:'axis', axisPointer:{ type:'shadow' }, formatter:p=>p.map(x=>`${x.seriesName}: ${fmtSize(x.value)}`).join('<br/>') },
+    grid:{ left:8, right:8, top:6, bottom:6, containLabel:false },
+    xAxis:{ type:'value', show:false, max:total },
+    yAxis:{ type:'category', show:false, data:['占用'] },
+    series: items.map(it => ({
+      name:it.name, type:'bar', stack:'s', data:[it.value], barWidth:36,
+      itemStyle:{ color:it.color },
+      emphasis:{ itemStyle:{ shadowBlur:16, shadowColor:it.color } }
+    }))
+  });
+  const legend = document.getElementById('storageLegend');
+  if (legend) {
+    legend.innerHTML = items.map(it =>
+      `<span style="margin-right:18px"><span class="dot" style="background:${it.color}"></span>${it.name} ${fmtSize(it.value)}（${(it.value/total*100).toFixed(1)}%）</span>`
+    ).join('') + `<br/><span style="color:${NEON.sub}">合计 ${fmtSize(total)}</span>`;
+  }
 }
 
 async function renderPapers() {
@@ -292,6 +567,21 @@ async function deletePaper(id) {
 
 async function renderRecommend() {
   try {
+    const poolHtml = `<div class="card"><h3>&#x1F4E4; 上传论文进推荐池</h3>
+      <p style="color:#6b7280;font-size:0.8125rem;margin-bottom:12px">
+        上传的 PDF 挂在系统账户名下并自动设为推荐位，用系统账户的池子 key 解析 + 自动打标；用户删不到。
+      </p>
+      <div class="search-bar" style="flex-wrap:wrap;gap:8px">
+        <input type="file" id="poolFile" accept="application/pdf" />
+        <input id="poolField" placeholder="领域（可选，留空自动打标）" style="max-width:220px" />
+        <button class="btn btn-primary" onclick="poolUpload()">上传解析</button>
+        <button class="btn btn-outline" onclick="backfillTags()" title="给缺标签的已完成论文补 field/tags，不重解析">
+          &#x1F3F7; 回填标签
+        </button>
+      </div>
+      <div id="poolMsg" style="font-size:0.8125rem;color:#6b7280;margin-top:8px"></div>
+    </div>`;
+
     const d = await api('GET', '/api/admin/recommendations');
     let recHtml = `<div class="card"><h3>&#x2B50; 当前推荐位（${d.total} 篇）</h3>`;
     if (!d.items.length) {
@@ -324,8 +614,41 @@ async function renderRecommend() {
       <div id="candidateList"><div class="empty">输入关键词搜索要推荐的论文</div></div>
     </div>`;
 
-    return recHtml + addHtml;
+    return poolHtml + recHtml + addHtml;
   } catch(e) { return `<div class="empty">加载失败: ${e.message}</div>`; }
+}
+
+async function poolUpload() {
+  const fileEl = document.getElementById('poolFile');
+  const msg = document.getElementById('poolMsg');
+  if (!fileEl.files || !fileEl.files.length) { toast('请选择 PDF 文件', 'error'); return; }
+  const fd = new FormData();
+  fd.append('file', fileEl.files[0]);
+  const field = document.getElementById('poolField').value.trim();
+  if (field) fd.append('field', field);
+  msg.textContent = '上传中…';
+  try {
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch('/api/admin/pool/upload', { method: 'POST', headers, body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail?.error?.message || `HTTP ${res.status}`);
+    msg.textContent = `已入池并开始解析（${data.file_name}），解析完成后自动出现在推荐位。`;
+    toast('上传成功，解析中');
+    fileEl.value = '';
+    setTimeout(renderTab, 1500);
+  } catch(e) { msg.textContent = ''; toast(e.message, 'error'); }
+}
+
+async function backfillTags() {
+  if (!confirm('给缺标签的已完成论文补 field/tags（不重解析），用池子 key。继续？')) return;
+  const msg = document.getElementById('poolMsg');
+  msg.textContent = '回填中，请稍候…';
+  try {
+    const d = await api('POST', '/api/admin/pool/backfill-tags');
+    msg.textContent = `回填完成：处理 ${d.processed} 篇，跳过 ${d.skipped} 篇（共 ${d.total} 篇已完成）。`;
+    toast('回填完成');
+  } catch(e) { msg.textContent = ''; toast(e.message, 'error'); }
 }
 
 async function searchCandidates() {

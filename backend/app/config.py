@@ -54,6 +54,18 @@ OPENALEX_MAILTO = os.environ.get("OPENALEX_MAILTO") or _load_optional_config(
     "openalex_config.json", "OPENALEX_MAILTO", default="literature-ai@example.com"
 )
 
+# 推荐池专用 LLM key —— 管理员上传进「系统账户」的池子论文，靠它做解析/自动打标。
+#   系统账户本身不登录、无个人 key；init_system_user() 会把此 key 加密写进系统账户，
+#   于是解析管线（读 user.api_key_encrypted）零改动即可用它。
+#   ⚠️ 单独放 backend/pool_config.json（gitignore，勿提交真实 key），形如：
+#       { "RECOMMEND_POOL_API_KEY": "<你的key>", "RECOMMEND_POOL_PROVIDER": "deepseek" }
+RECOMMEND_POOL_API_KEY = os.environ.get("RECOMMEND_POOL_API_KEY") or _load_optional_config(
+    "pool_config.json", "RECOMMEND_POOL_API_KEY", default=""
+)
+RECOMMEND_POOL_PROVIDER = os.environ.get("RECOMMEND_POOL_PROVIDER") or _load_optional_config(
+    "pool_config.json", "RECOMMEND_POOL_PROVIDER", default="deepseek"
+)
+
 # 文件存储路径
 DATA_DIR = os.path.join(BASE_DIR, "data")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")

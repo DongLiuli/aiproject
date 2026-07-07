@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { Flame, ArrowRight, Lightbulb } from 'lucide-vue-next'
+import { ArrowRight } from 'lucide-vue-next'
 
 const props = defineProps({
   paper: { type: Object, required: true },
@@ -10,7 +10,7 @@ const props = defineProps({
 
 const emit = defineEmits(['view'])
 
-// 领域 → 稳定色相（无 field 用默认蓝），用于整卡渐变与色标
+// 领域 → 稳定色相，仅用于左侧一条细色条（信息编码：一眼辨领域），卡片主体保持中性白
 const hue = computed(() => {
   const field = props.paper.field
   if (!field) return 220
@@ -42,13 +42,9 @@ function handleClick() {
     @keydown.enter="handleClick"
   >
     <div class="card-top">
-      <span v-if="source === 'admin'" class="badge-featured">
-        <Flame class="badge-icon" />
-        精选
-      </span>
-      <span v-else class="badge-featured badge-tag">
-        <Flame class="badge-icon" />
-        推荐
+      <!-- 来源区分：填充=管理员精选，描边=系统按兴趣推荐（同形同字号，务实克制） -->
+      <span class="badge" :class="source === 'admin' ? 'badge-solid' : 'badge-outline'">
+        {{ source === 'admin' ? '精选' : '推荐' }}
       </span>
       <span v-if="paper.field" class="field-chip">{{ paper.field }}</span>
     </div>
@@ -59,11 +55,8 @@ function handleClick() {
 
     <p class="card-author">{{ authorLine }}</p>
 
-    <!-- admin 卡已有「精选」徽章，不再重复显示「管理员精选」理由胶囊 -->
-    <div class="reason-pill" v-if="reason && source !== 'admin'">
-      <Lightbulb class="reason-icon" />
-      <span>{{ reason }}</span>
-    </div>
+    <!-- admin 卡已有「精选」徽章，理由（管理员精选）冗余，仅 tag 卡显示命中理由 -->
+    <p class="reason-line" v-if="reason && source !== 'admin'">{{ reason }}</p>
 
     <div class="card-foot">
       <span class="read-link">去阅读 <ArrowRight class="read-icon" /></span>
@@ -74,43 +67,23 @@ function handleClick() {
 <style scoped>
 .recommend-card {
   position: relative;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-height: 190px;
-  padding: 16px 18px;
-  border-radius: 16px;
+  min-height: 180px;
+  padding: 14px 16px 14px 18px;
+  border: 1px solid #e5e7eb;
+  border-left: 3px solid hsl(var(--hue), 55%, 55%); /* 学科色条：唯一的彩色信息编码 */
+  border-radius: 10px;
+  background: #fff;
   cursor: pointer;
-  border: 1px solid hsla(var(--hue), 60%, 70%, 0.35);
-  background:
-    linear-gradient(135deg, hsla(var(--hue), 85%, 96%, 0.95) 0%, hsla(var(--hue), 70%, 99%, 0.9) 55%, #ffffff 100%);
-  box-shadow: 0 2px 10px hsla(var(--hue), 40%, 60%, 0.12);
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 .recommend-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 28px hsla(var(--hue), 45%, 55%, 0.28);
-}
-/* hover 光泽扫过 */
-.recommend-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -70%;
-  width: 50%;
-  height: 100%;
-  background: linear-gradient(
-    120deg,
-    transparent 0%,
-    hsla(0, 0%, 100%, 0.55) 50%,
-    transparent 100%
-  );
-  transform: skewX(-20deg);
-  transition: left 0.6s ease;
-  pointer-events: none;
-}
-.recommend-card:hover::before {
-  left: 130%;
+  transform: translateY(-2px);
+  border-color: #d1d5db;
+  border-left-color: hsl(var(--hue), 60%, 48%);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
 }
 
 .card-top {
@@ -119,32 +92,35 @@ function handleClick() {
   gap: 8px;
   margin-bottom: 10px;
 }
-.badge-featured {
+
+/* 徽章：统一尺寸/字号，仅填充 vs 描边区分来源 */
+.badge {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 2px 8px;
+  padding: 2px 9px;
   font-size: 0.72rem;
   font-weight: 600;
+  border-radius: 6px;
+  letter-spacing: 0.3px;
+}
+.badge-solid {
   color: #fff;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #f97316, #ef4444);
+  background: #4f46e5;
 }
-.badge-featured.badge-tag {
-  background: linear-gradient(135deg, hsl(var(--hue), 75%, 58%), hsl(var(--hue), 70%, 45%));
+.badge-outline {
+  color: #4f46e5;
+  background: transparent;
+  border: 1px solid #c7d2fe;
 }
-.badge-icon {
-  width: 12px;
-  height: 12px;
-}
+
 .field-chip {
   margin-left: auto;
   padding: 2px 9px;
   font-size: 0.7rem;
   font-weight: 500;
-  color: hsl(var(--hue), 60%, 35%);
-  background: hsla(var(--hue), 70%, 88%, 0.7);
-  border-radius: 999px;
+  color: #6b7280;
+  background: #f3f4f6;
+  border-radius: 6px;
   max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -153,20 +129,22 @@ function handleClick() {
 
 .card-title {
   margin: 0;
-  font-size: 0.98rem;
+  font-size: 0.95rem;
   font-weight: 600;
-  line-height: 1.4;
-  color: #1f2937;
+  line-height: 1.45;
+  color: #111827;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
 .divider {
   height: 1px;
   margin: 10px 0;
-  background: hsla(var(--hue), 40%, 70%, 0.35);
+  background: #f0f0f0;
 }
+
 .card-author {
   margin: 0;
   font-size: 0.8rem;
@@ -176,27 +154,13 @@ function handleClick() {
   white-space: nowrap;
 }
 
-.reason-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 12px;
-  padding: 4px 10px;
-  font-size: 0.75rem;
-  color: hsl(var(--hue), 55%, 32%);
-  background: hsla(var(--hue), 75%, 90%, 0.75);
-  border-radius: 999px;
-  max-width: 100%;
-}
-.reason-pill span {
+.reason-line {
+  margin: 8px 0 0;
+  font-size: 0.76rem;
+  color: #9ca3af;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.reason-icon {
-  width: 13px;
-  height: 13px;
-  flex-shrink: 0;
 }
 
 .card-foot {
@@ -209,9 +173,9 @@ function handleClick() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 600;
-  color: hsl(var(--hue), 65%, 45%);
+  color: #4f46e5;
 }
 .read-icon {
   width: 14px;

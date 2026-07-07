@@ -180,83 +180,62 @@ def get_recommendations(
         full = (info.full_text or "").strip()
         return full[:600] if full else ""
 
-    # 1) 管理员推荐位：跨用户，按 recommend_order 升序（NULL 排最后），再按上传时间倒序
-    admin_papers = (
+    # 推荐池 = 所有被设为推荐位的已完成论文（管理员手标 + 管理员上传进系统账户的）。
+    # 不再从「用户自己的库」补足，故不存在推荐自己论文 / 用户删除影响推荐的问题。
+    pool = (
         db.query(Paper)
-        .filter(Paper.is_recommended == True)  # noqa: E712
-        .order_by(
-            Paper.recommend_order.is_(None),      # 非 NULL 在前
-            Paper.recommend_order.asc(),
-            Paper.upload_time.desc(),
-        )
-        .limit(limit)
+        .filter(Paper.is_recommended == True, Paper.parse_status == "completed")  # noqa: E712
         .all()
     )
-    for p in admin_papers:
-        if p.paper_id in seen:
-            continue
-        seen.add(p.paper_id)
-        items.append({**p.to_dict(), "reason": "管理员精选", "recommend_source": "admin",
-                      "abstract": _abstract_of(p)})
+    if not pool:
+        return {"items": []}
 
-    # 2) 标签匹配补足：不足 limit 时，用当前用户近期论文的 field/tags 给「其它论文」打分
-    if len(items) < limit:
-        recent = (
-            db.query(Paper)
-            .filter(Paper.user_id == user_id, Paper.parse_status == "completed")
-            .order_by(Paper.upload_time.desc())
-            .limit(10)
-            .all()
-        )
-        user_tags = set()
-        user_fields = set()
-        for p in recent:
-            for t in (p.tags or []):
-                user_tags.add(t)
-            if p.field:
-                user_fields.add(p.field)
+    # 用户兴趣画像：近期已完成论文的 tags/field（自动打标补全后才有内容）
+    recent = (
+        db.query(Paper)
+        .filter(Paper.user_id == user_id, Paper.parse_status == "completed")
+        .order_by(Paper.upload_time.desc())
+        .limit(10)
+        .all()
+    )
+    user_tags = set()
+    user_fields = set()
+    for p in recent:
+        for t in (p.tags or []):
+            user_tags.add(t)
+        if p.field:
+            user_fields.add(p.field)
 
-        if user_tags or user_fields:
-            candidates = (
-                db.query(Paper)
-                .filter(
-                    Paper.user_id == user_id,
-                    Paper.parse_status == "completed",
-                    Paper.is_recommended.isnot(True),  # 含 False 与历史 NULL 行
-                )
-                .all()
-            )
-            scored = []
-            for c in candidates:
-                if c.paper_id in seen:
-                    continue
-                ctags = set(c.tags or [])
-                inter = ctags & user_tags
-                score = len(inter) * 10
-                same_field = bool(c.field and c.field in user_fields)
-                if same_field:
-                    score += 5
-                if c.read_status == "unread":
-                    score += 2
-                if score <= 0:
-                    continue  # 无任何重合，不推
-                # 生成推荐理由
-                if inter:
-                    reason = "含相同标签：" + "、".join(list(inter)[:2])
-                elif same_field:
-                    reason = f"与你关注的 {c.field} 领域相关"
-                else:
-                    reason = "你可能感兴趣"
-                scored.append((score, c, reason))
+    # 给池子每篇按用户兴趣打分（标签重合 +10/个、同领域 +5）
+    scored = []
+    for c in pool:
+        ctags = set(c.tags or [])
+        inter = ctags & user_tags
+        score = len(inter) * 10
+        same_field = bool(c.field and c.field in user_fields)
+        if same_field:
+            score += 5
+        if inter:
+            reason = "含相同标签：" + "、".join(list(inter)[:2])
+        elif same_field:
+            reason = f"与你关注的 {c.field} 领域相关"
+        else:
+            reason = "管理员精选"
+        scored.append((c, score, reason))
 
-            # 分数降序，同分按上传时间倒序
-            scored.sort(key=lambda x: (x[0], x[1].upload_time or datetime.min), reverse=True)
-            for score, c, reason in scored:
-                if len(items) >= limit:
-                    break
-                seen.add(c.paper_id)
-                items.append({**c.to_dict(), "reason": reason, "recommend_source": "tag",
-                              "abstract": _abstract_of(c)})
+    # 排序：recommend_order 有值的（管理员手动置顶）优先，按 order 升序；
+    #       其余按兴趣分降序、再按上传时间倒序。
+    pinned = [x for x in scored if x[0].recommend_order is not None]
+    rest = [x for x in scored if x[0].recommend_order is None]
+    pinned.sort(key=lambda x: x[0].recommend_order)
+    rest.sort(key=lambda x: (x[1], x[0].upload_time or datetime.min), reverse=True)
+    ordered = pinned + rest
+
+    for c, score, reason in ordered[:limit]:
+        # 命中用户兴趣 → 个性化卡（描边「推荐」+ 理由）；否则编辑位（实心「精选」）
+        source = "tag" if score > 0 else "admin"
+        items.append({**c.to_dict(), "reason": reason, "recommend_source": source,
+                      "abstract": _abstract_of(c)})
 
     return {"items": items}
 
@@ -529,6 +508,21 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         paper.title = title
         if authors:
             paper.authors = authors
+
+        # ⑥ 自动打标（加法步骤）：只用摘要一次小调用抽 field/tags，受控归一 + 别名自生长。
+        #    供池子化推荐按用户兴趣排序。失败绝不阻断解析；标签机器所有，直接覆盖旧值
+        #    （含搜索导入写死的 ["学术搜索"] 来源标记）。
+        try:
+            from ai.tagger import extract_tags
+            abstract_for_tag = info_data.get("abstract") or (full_text or "")[:800]
+            tg = extract_tags(abstract_for_tag, llm_client)
+            if tg.get("field"):
+                paper.field = tg["field"]
+            if tg.get("tags"):
+                paper.tags = tg["tags"]
+        except Exception as e:
+            logger.warning(f"自动打标失败（不影响解析）: {e}")
+
         paper.parse_status = "completed"
         if kb_warning:
             paper.parse_error = f"知识库部分: {kb_warning}"

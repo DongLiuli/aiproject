@@ -1,5 +1,31 @@
 # literature-ai
 
+## 本地配置文件（首次拉代码 / 新成员必读）
+
+后端有几个 **含密钥或本地信息的配置文件不进 git**（都在 `.gitignore`），每人首次运行前需照各自的 `*.example.json` 模板，在 `backend/` 下复制出真实文件填写。做法统一：**复制 example → 去掉 `.example` → 填值**。
+
+| 真实文件（本地建，勿提交） | 模板 | 必需？ | 作用 |
+|---|---|---|---|
+| `backend/db_config.json` | `db_config.example.json` | **必需** | MySQL 连接串 `DATABASE_URL` |
+| `backend/openalex_config.json` | `openalex_config.example.json` | 可选 | 学术搜索 OpenAlex key（留空则匿名，仍可用） |
+| `backend/pool_config.json` | `pool_config.example.json` | 推荐功能需要 | **推荐池专用 LLM key**（见下） |
+
+### pool_config.json —— 推荐池专用 key
+
+管理员在后台「推荐管理」页上传的论文，会挂在**系统账户**名下并自动设为推荐位，用这个 key 解析 + 自动打标（用户删自己的论文不影响推荐池）。
+
+```bash
+cd backend
+cp pool_config.example.json pool_config.json   # Windows: copy pool_config.example.json pool_config.json
+# 编辑 pool_config.json，填入一个 DeepSeek 或 Qwen 的 key：
+#   { "RECOMMEND_POOL_API_KEY": "sk-xxxx", "RECOMMEND_POOL_PROVIDER": "deepseek" }
+# 然后重启后端 —— 启动时会把此 key 加密注入系统账户，之后上传/回填才能用。
+```
+
+- **不填的后果**：admin 页的「上传论文进推荐池」和「回填标签」会返回"未配置推荐池 key"；普通用户上传/解析、学术搜索等其它功能**不受影响**。
+- `RECOMMEND_POOL_PROVIDER` 填 `deepseek` 或 `qwen`；key 轮换只需改此文件并重启（`init_system_user` 幂等刷新）。
+- 运行时会在 `backend/data/tag_aliases.json` 自动沉淀标签同义词（已 gitignore，属运行数据，勿提交）。
+
 ## 数据库变更与同步流程（Alembic）
 
 > **一句话**：改表结构 = 改 `models.py` + 生成迁移脚本并提交；队友同步 = `git pull` 后跑 `alembic upgrade head`。迁移脚本随代码进 git，所有人的 schema 因此收敛到一致。

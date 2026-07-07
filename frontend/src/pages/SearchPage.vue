@@ -674,12 +674,13 @@ function closeDrawer() {
   flex-shrink: 0;
 }
 
-/* 让内嵌的 RecommendCard 与右侧融为一体：去掉自身圆角/边框/阴影/悬浮，
-   贴合左半区，右缘用一条淡分隔线过渡到摘要 */
+/* 让内嵌的 RecommendCard 与右侧融为一体：去掉自身圆角/阴影/悬浮，贴合左半区，
+   保留左侧学科色条（信息编码），右缘用一条淡分隔线过渡到摘要 */
 .row-card :deep(.recommend-card) {
   min-height: 0;
   height: 100%;
-  border: none;
+  border-top: none;
+  border-bottom: none;
   border-right: 1px solid hsla(var(--hue), 40%, 80%, 0.5);
   border-radius: 0;
   box-shadow: none;
@@ -688,11 +689,6 @@ function closeDrawer() {
 .row-card :deep(.recommend-card:hover) {
   transform: none;
   box-shadow: none;
-}
-
-/* 整行统一 hover，卡片自身的光泽扫过关掉，避免和行 hover 打架 */
-.row-card :deep(.recommend-card::before) {
-  display: none;
 }
 
 .row-abstract {

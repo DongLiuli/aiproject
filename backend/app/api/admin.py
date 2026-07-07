@@ -9,13 +9,16 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from passlib.context import CryptContext
 from jose import jwt
 
-from ..config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_HOURS, UPLOAD_DIR, VECTOR_DIR, DATA_DIR
+from ..config import (
+    SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_HOURS, UPLOAD_DIR, VECTOR_DIR, DATA_DIR,
+    MAX_UPLOAD_SIZE, SYSTEM_USER_ID,
+)
 from ..models import get_db, Admin, User, Paper, PaperStructuredInfo, Conversation, Message, Chunk, Report
 
 router = APIRouter(prefix="/api/admin", tags=["管理端"])
@@ -166,6 +169,204 @@ def get_system_stats(admin_id: str = Depends(get_current_admin)):
     }
 
 
+# ========== 数据可视化聚合（新增，供管理端仪表盘用） ==========
+
+@router.get("/stats/trends")
+def get_stats_trends(days: int = 30, admin_id: str = Depends(get_current_admin)):
+    """时间趋势：按天聚合论文上传 / 新增注册用户 / 问答消息 / 对话数。
+    返回连续日期序列（缺失日期补 0），前端直接画折线/面积图。"""
+    from sqlalchemy import func
+    db = next(get_db())
+    days = max(1, min(days, 365))
+    today = datetime.now().date()
+    start_date = today - timedelta(days=days - 1)
+    start_dt = datetime.combine(start_date, datetime.min.time())
+
+    def daily_counts(date_col, extra_filter=None):
+        q = db.query(func.date(date_col).label("d"), func.count().label("c")).filter(date_col >= start_dt)
+        if extra_filter is not None:
+            q = q.filter(extra_filter)
+        q = q.group_by(func.date(date_col))
+        result = {}
+        for row in q.all():
+            d = row.d
+            key = d.isoformat() if hasattr(d, "isoformat") else str(d)
+            result[key] = row.c
+        return result
+
+    papers_map = daily_counts(Paper.upload_time)
+    users_map = daily_counts(User.created_at, User.is_anonymous == False)  # noqa: E712
+    messages_map = daily_counts(Message.created_at)
+    conv_map = daily_counts(Conversation.created_at)
+
+    dates, papers, users, messages, conversations = [], [], [], [], []
+    for i in range(days):
+        d = start_date + timedelta(days=i)
+        key = d.isoformat()
+        dates.append(key)
+        papers.append(papers_map.get(key, 0))
+        users.append(users_map.get(key, 0))
+        messages.append(messages_map.get(key, 0))
+        conversations.append(conv_map.get(key, 0))
+
+    return {
+        "days": days,
+        "dates": dates,
+        "papers": papers,
+        "users": users,
+        "messages": messages,
+        "conversations": conversations,
+    }
+
+
+@router.get("/stats/analytics")
+def get_stats_analytics(admin_id: str = Depends(get_current_admin)):
+    """分布 + KPI 今日环比 + 存储明细，一次性返回，供仪表盘图表使用。"""
+    from sqlalchemy import func
+    db = next(get_db())
+
+    # ---- 分布 ----
+    status_rows = dict(db.query(Paper.parse_status, func.count()).group_by(Paper.parse_status).all())
+
+    registered = db.query(func.count()).select_from(User).filter(User.is_anonymous == False).scalar() or 0  # noqa: E712
+    anonymous = db.query(func.count()).select_from(User).filter(User.is_anonymous == True).scalar() or 0  # noqa: E712
+
+    # ---- 总览 ----
+    total_papers = sum(status_rows.values())
+    completed = status_rows.get("completed", 0)
+    failed = status_rows.get("failed", 0)
+    parsing = status_rows.get("pending", 0) + status_rows.get("parsing", 0)
+    total_conversations = db.query(func.count()).select_from(Conversation).scalar() or 0
+    total_messages = db.query(func.count()).select_from(Message).scalar() or 0
+    total_reports = db.query(func.count()).select_from(Report).scalar() or 0
+
+    # ---- KPI 今日 vs 昨日 ----
+    today = datetime.now().date()
+    today_start = datetime.combine(today, datetime.min.time())
+    yesterday_start = today_start - timedelta(days=1)
+    tomorrow_start = today_start + timedelta(days=1)
+
+    def count_in_range(model, date_col, start, end, extra_filter=None):
+        q = db.query(func.count()).select_from(model).filter(date_col >= start, date_col < end)
+        if extra_filter is not None:
+            q = q.filter(extra_filter)
+        return q.scalar() or 0
+
+    def kpi_pair(model, date_col, extra_filter=None):
+        t = count_in_range(model, date_col, today_start, tomorrow_start, extra_filter)
+        y = count_in_range(model, date_col, yesterday_start, today_start, extra_filter)
+        delta = None if y == 0 else round((t - y) / y * 100, 1)
+        return {"today": t, "yesterday": y, "delta_pct": delta}
+
+    kpi = {
+        "papers": kpi_pair(Paper, Paper.upload_time),
+        "users": kpi_pair(User, User.created_at, User.is_anonymous == False),  # noqa: E712
+        "conversations": kpi_pair(Conversation, Conversation.created_at),
+        "messages": kpi_pair(Message, Message.created_at),
+    }
+
+    return {
+        "totals": {
+            "papers": total_papers,
+            "completed": completed,
+            "failed": failed,
+            "parsing": parsing,
+            "registered_users": registered,
+            "anonymous_users": anonymous,
+            "conversations": total_conversations,
+            "messages": total_messages,
+            "reports": total_reports,
+            "success_rate": f"{completed / max(total_papers, 1) * 100:.1f}%",
+        },
+        "distribution": {
+            "paper_status": [{"name": k, "value": v} for k, v in status_rows.items()],
+        },
+        "kpi": kpi,
+        "storage": {
+            "database_bytes": _get_db_size(),
+            "uploads_bytes": _get_uploads_size(),
+            "vectors_bytes": _get_vectors_size(),
+        },
+    }
+
+
+@router.get("/stats/insights")
+def get_stats_insights(admin_id: str = Depends(get_current_admin)):
+    """深度洞察：使用时段热力图 + 热门标签 Top + 高产作者 Top（均基于已落库的真实字段）。"""
+    from sqlalchemy import func
+    db = next(get_db())
+
+    # ---- 使用时段热力图（周几 × 小时）：聚合上传/问答/报告/对话四类活动，尽量填满格子 ----
+    grid = {}
+
+    def add_events(date_col, model):
+        rows = (
+            db.query(func.weekday(date_col), func.hour(date_col), func.count())
+            .select_from(model)
+            .group_by(func.weekday(date_col), func.hour(date_col))
+            .all()
+        )
+        for wd, hr, cnt in rows:
+            if wd is None or hr is None:
+                continue
+            key = (int(wd), int(hr))  # weekday: 0=周一 … 6=周日
+            grid[key] = grid.get(key, 0) + int(cnt)
+
+    add_events(Message.created_at, Message)
+    add_events(Paper.upload_time, Paper)
+    add_events(Report.generated_at, Report)
+    add_events(Conversation.created_at, Conversation)
+    heatmap = [[h, wd, c] for (wd, h), c in grid.items()]  # ECharts: [x=小时, y=周几, 值]
+    heatmap_max = max(grid.values()) if grid else 0
+
+    # ---- 热门标签 Top（聚合每篇论文 LLM 自动打的 tags，已归一化，直接计数） ----
+    tag_count = {}
+    for (tags,) in db.query(Paper.tags).filter(Paper.tags.isnot(None)).all():
+        lst = tags
+        if isinstance(lst, str):
+            try:
+                lst = json.loads(lst)
+            except (json.JSONDecodeError, TypeError):
+                lst = []
+        if not isinstance(lst, list):
+            continue
+        for t in lst:
+            name = str(t).strip()
+            if name:
+                tag_count[name] = tag_count.get(name, 0) + 1
+    tags_top = sorted(
+        ({"name": k, "value": v} for k, v in tag_count.items()),
+        key=lambda x: x["value"], reverse=True,
+    )[:15]
+
+    # ---- 高产作者 Top（聚合 papers.authors 数组） ----
+    author_count = {}
+    for (authors,) in db.query(Paper.authors).filter(Paper.authors.isnot(None)).all():
+        lst = authors
+        if isinstance(lst, str):
+            try:
+                lst = json.loads(lst)
+            except (json.JSONDecodeError, TypeError):
+                lst = []
+        if not isinstance(lst, list):
+            continue
+        for a in lst:
+            name = str(a).strip()
+            if name:
+                author_count[name] = author_count.get(name, 0) + 1
+    authors_top = sorted(
+        ({"name": k, "value": v} for k, v in author_count.items()),
+        key=lambda x: x["value"], reverse=True,
+    )[:15]
+
+    return {
+        "heatmap": heatmap,
+        "heatmap_max": heatmap_max,
+        "tags": tags_top,
+        "authors": authors_top,
+    }
+
+
 # ========== 论文管理 ==========
 
 @router.get("/papers")
@@ -283,6 +484,130 @@ def set_recommend(paper_id: str, body: RecommendRequest, admin_id: str = Depends
 
     db.commit()
     return paper.to_dict()
+
+
+# ========== 推荐池：上传专属论文 + 回填标签 ==========
+
+@router.post("/pool/upload")
+async def pool_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    field: Optional[str] = Form(None),
+    admin_id: str = Depends(get_current_admin),
+):
+    """管理员上传一篇论文进「推荐池」：挂在系统账户名下 + 直接设为推荐位。
+
+    用系统账户的池子 key 走现成解析管线（含自动打标）。用户删不到（归属系统账户），
+    删除转移逻辑也不触及。返回 paper_id / 解析状态。
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, detail={"error": {"code": "NOT_PDF", "message": "请上传 PDF 格式文件"}})
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(413, detail={"error": {"code": "FILE_TOO_LARGE", "message": "文件大小超过 50MB 限制"}})
+
+    from ..config import RECOMMEND_POOL_API_KEY
+    if not RECOMMEND_POOL_API_KEY:
+        raise HTTPException(400, detail={"error": {"code": "POOL_KEY_MISSING",
+                            "message": "未配置推荐池 key（backend/pool_config.json），无法解析"}})
+
+    db = next(get_db())
+    paper_id = str(uuid.uuid4())
+    file_path = os.path.join(UPLOAD_DIR, f"{paper_id}.pdf")
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    # 可读性检测
+    try:
+        import fitz
+        doc = fitz.open(file_path)
+        doc.close()
+    except Exception:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(422, detail={"error": {"code": "PDF_UNREADABLE", "message": "PDF 文件损坏或无法读取"}})
+
+    # recommend_order 自动排到末尾
+    max_order = (
+        db.query(Paper.recommend_order)
+        .filter(Paper.is_recommended.is_(True), Paper.recommend_order.isnot(None))
+        .order_by(Paper.recommend_order.desc())
+        .first()
+    )
+    next_order = (max_order[0] + 1) if max_order and max_order[0] is not None else 0
+
+    paper = Paper(
+        paper_id=paper_id,
+        user_id=SYSTEM_USER_ID,
+        file_name=file.filename,
+        file_size=len(content),
+        file_path=file_path,
+        field=field,
+        tags=[],
+        is_recommended=True,
+        recommend_order=next_order,
+        parse_status="pending",
+    )
+    db.add(paper)
+    db.commit()
+
+    from .papers import _run_parse_pipeline
+    background_tasks.add_task(_run_parse_pipeline, paper_id, SYSTEM_USER_ID)
+
+    return {"paper_id": paper_id, "file_name": file.filename, "parse_status": "pending"}
+
+
+@router.post("/pool/backfill-tags")
+def pool_backfill_tags(admin_id: str = Depends(get_current_admin)):
+    """给缺标签的已完成论文补 field/tags —— 只跑打标步骤，不重解析。幂等、可重跑。
+
+    缺标签判定：tags 为空或仅有 ["学术搜索"] 来源标记。摘要取自已存的 sections/full_text，
+    无需重新解析 PDF。统一用推荐池 key 付这次的 token（跨用户批量操作）。
+    """
+    from ..config import RECOMMEND_POOL_API_KEY, RECOMMEND_POOL_PROVIDER
+    if not RECOMMEND_POOL_API_KEY:
+        raise HTTPException(400, detail={"error": {"code": "POOL_KEY_MISSING",
+                            "message": "未配置推荐池 key（backend/pool_config.json）"}})
+
+    from ai.llm_client import LLMClient
+    from ai.tagger import extract_tags
+    llm = LLMClient(api_key=RECOMMEND_POOL_API_KEY, provider=RECOMMEND_POOL_PROVIDER)
+
+    db = next(get_db())
+    papers = db.query(Paper).filter(Paper.parse_status == "completed").all()
+    processed, skipped = 0, 0
+    for p in papers:
+        tags = p.tags or []
+        if tags and tags != ["学术搜索"]:
+            skipped += 1
+            continue
+
+        info = db.query(PaperStructuredInfo).filter(PaperStructuredInfo.paper_id == p.paper_id).first()
+        abstract = ""
+        if info:
+            sections = info._try_json(info.sections, []) or []
+            for sec in sections:
+                title = (sec.get("title") or "").strip().lower()
+                if "abstract" in title or "摘要" in title:
+                    abstract = (sec.get("content") or "").strip()
+                    if abstract:
+                        break
+            if not abstract:
+                abstract = (info.full_text or "")[:800]
+        if not abstract:
+            skipped += 1
+            continue
+
+        tg = extract_tags(abstract, llm)
+        if tg.get("field"):
+            p.field = tg["field"]
+        if tg.get("tags"):
+            p.tags = tg["tags"]
+        processed += 1
+    db.commit()
+
+    return {"processed": processed, "skipped": skipped, "total": len(papers)}
 
 
 # ========== 用户管理 ==========
@@ -818,12 +1143,28 @@ def init_system_user():
     首页推荐继续可读。系统账户永不登录，固定 id 走 git 同步，人人本地一致。
     """
     from ..models import SessionLocal
-    from ..config import SYSTEM_USER_ID, SYSTEM_USERNAME
+    from ..config import (
+        SYSTEM_USER_ID, SYSTEM_USERNAME, RECOMMEND_POOL_API_KEY, RECOMMEND_POOL_PROVIDER,
+    )
     db = SessionLocal()
     try:
         existing = db.query(User).filter(User.id == SYSTEM_USER_ID).first()
         if not existing:
-            db.add(User(id=SYSTEM_USER_ID, username=SYSTEM_USERNAME, is_anonymous=False))
-            db.commit()
+            existing = User(id=SYSTEM_USER_ID, username=SYSTEM_USERNAME, is_anonymous=False)
+            db.add(existing)
+
+        # 注入/刷新推荐池 LLM key 到系统账户（加密存储），于是解析管线读 api_key_encrypted
+        # 即可解析/打标系统账户名下的池子论文，无需改动管线。启动时幂等刷新（支持 key 轮换）。
+        if RECOMMEND_POOL_API_KEY:
+            try:
+                from .user import _encrypt
+                existing.api_key_encrypted = _encrypt(RECOMMEND_POOL_API_KEY)
+                existing.model_preference = (
+                    "qwen-turbo" if RECOMMEND_POOL_PROVIDER == "qwen" else "deepseek-chat"
+                )
+            except Exception as e:
+                logging.warning(f"[系统账户] 注入推荐池 key 失败: {e}")
+
+        db.commit()
     finally:
         db.close()

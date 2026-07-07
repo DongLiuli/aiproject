@@ -1,0 +1,5 @@
+{
+  "_comment": "推荐池专用 LLM key。复制此文件为 pool_config.json 后填写（pool_config.json 已在 .gitignore，勿提交真实 key）。管理员上传进推荐池的论文挂在系统账户名下，用此 key 解析+自动打标；留空则无法上传池子论文/回填标签。RECOMMEND_POOL_PROVIDER 填 deepseek 或 qwen。",
+  "RECOMMEND_POOL_API_KEY": "sk-在此填入推荐池专用的-DeepSeek-或-Qwen-key",
+  "RECOMMEND_POOL_PROVIDER": "deepseek"
+}
