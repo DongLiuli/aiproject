@@ -30,10 +30,29 @@ SEARCH_CONFIG = {
     "top_k": 5,
     "score_threshold": 0.5,
     "use_hybrid": True,     # 混合检索总开关（关闭则回退纯向量，可做消融对比）
-    "use_rerank": False,    # cross-encoder 重排开关（档位2，本期占位不接模型）
-    "rerank_top_n": 10,     # 重排候选数（use_rerank 时生效）
+    "use_rerank": False,    # cross-encoder 重排开关（档位2；开启后对候选做语义精排）
+    "rerank_top_n": 10,     # 重排候选数（use_rerank 时生效，越大越慢）
+    "rerank_model": "BAAI/bge-reranker-base",  # 重排模型（base 比 large 省一半显存）
     "rrf_k": 60,            # RRF 融合常数，经验值 60
     "fetch_k": 20,          # 每路（向量/BM25）召回的候选池大小
+}
+
+# 学术搜索配置（OpenAlex，功能：学术搜索工作区）
+ACADEMIC_CONFIG = {
+    "api_base": "https://api.openalex.org/works",
+    "per_page": 10,       # 一页锁定展示的论文数
+    "fetch_k": 25,        # 相关度召回候选池（再按 cited_by_count 重排取 per_page）
+    "timeout": 20,        # OpenAlex 请求超时（秒）
+    "abstract_max": 1500, # 综述上下文里每篇摘要的截断字符数
+    "topics_per_paper": 2,  # 主题聚类图里每篇论文取的 top 主题数
+}
+
+# 结构化抽取配置（方案2A：检索式抽取 vs 方案二 2-lite 采样）
+EXTRACT_CONFIG = {
+    "mode": "retrieval",     # "retrieval"=方案2A检索式(默认) | "sample"=方案二2-lite采样(降级/消融)
+    "per_query_k": 3,        # 每类字段（背景/方法/实验/局限）检索的块数
+    "opening_chars": 2000,   # 保底纳入的开头字符数（覆盖标题/作者/摘要）
+    "retrieval_budget": 12000,  # 检索式拼接的总字符预算
 }
 
 # 路径配置

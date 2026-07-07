@@ -225,4 +225,6 @@ backend/data/
 
 # 数据库配置（每人本地创建，勿提交）
 backend/db_config.json
+# OpenAlex 学术检索 key（每人本地填 openalex_config.json，勿提交；示例文件 openalex_config.example.json 作模板）
+backend/openalex_config.json
 doc/plantuml/

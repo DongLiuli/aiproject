@@ -2,9 +2,7 @@
 import { ref, watch, nextTick, computed } from 'vue'
 import { useQAStore } from '@/stores/papers'
 import { Send, Loader2, MessageSquare, FileText, Link } from 'lucide-vue-next'
-import { marked } from 'marked'
-import katex from 'katex'
-import 'katex/dist/katex.min.css'
+import { renderContent } from '@/utils/markdown'
 
 const props = defineProps({
   paperId: {
@@ -24,41 +22,6 @@ const qaStore = useQAStore()
 const question = ref('')
 const messages = ref([])
 const messagesEl = ref(null)
-
-marked.setOptions({
-  breaks: true,
-  gfm: true
-})
-
-function renderContent(text) {
-  if (!text) return ''
-  
-  let html = marked.parse(text)
-  
-  html = html.replace(/\$\$(.+?)\$\$/g, (match, formula) => {
-    try {
-      return katex.renderToString(formula.trim(), {
-        throwOnError: false,
-        displayMode: true
-      })
-    } catch (e) {
-      return `<code>${formula}</code>`
-    }
-  })
-  
-  html = html.replace(/\$(.+?)\$/g, (match, formula) => {
-    try {
-      return katex.renderToString(formula.trim(), {
-        throwOnError: false,
-        displayMode: false
-      })
-    } catch (e) {
-      return `<code>${formula}</code>`
-    }
-  })
-  
-  return html
-}
 
 function scrollToSection(source) {
   emit('scroll-to-section', source.page, source.section)

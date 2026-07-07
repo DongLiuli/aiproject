@@ -12,6 +12,9 @@ from typing import Dict, List, Any
 from .config import MODEL_CONFIG, VECTOR_DIR, CHUNK_CONFIG, SEARCH_CONFIG
 from .pdf_parser import chunk_text
 
+# chunks.section_title 列为 VARCHAR(500)，超长标题（PDF 章节误识别）需截断
+MAX_SECTION_TITLE_LEN = 500
+
 
 class KnowledgeBase:
     """知识库管理类"""
@@ -132,9 +135,12 @@ def build_knowledge_base(paper_id: str, sections: List[Dict[str, Any]]) -> Dict[
         # 返回分块数据（供 A 写入数据库，不包含 faiss_index 和 embedding，因为模型没有这些字段）
         chunks_for_db = []
         for chunk in all_chunks:
+            # section_title 对应 DB 里的 VARCHAR(500)；PDF 章节识别偶尔会把整段正文
+            # 误当成标题，超长会触发 MySQL (1406) Data too long，这里在源头截断。
+            section_title = (chunk.get("section_title") or "")[:MAX_SECTION_TITLE_LEN]
             chunks_for_db.append({
                 "paper_id": paper_id,
-                "section_title": chunk["section_title"],
+                "section_title": section_title,
                 "page_number": chunk["page_number"],
                 "paragraph_index": chunk["paragraph_index"],
                 "content": chunk["content"]
@@ -188,6 +194,38 @@ def _check_hybrid_deps() -> bool:
             logging.warning(f"[混合检索] jieba/rank_bm25 不可用，回退纯向量检索: {e}")
             _hybrid_deps_available = False
     return _hybrid_deps_available
+
+
+# ========== 方案一：cross-encoder 重排（懒加载单例） ==========
+
+_rerank_deps_available = None
+_reranker = None
+
+
+def _check_rerank_deps() -> bool:
+    """检查重排依赖（sentence_transformers.CrossEncoder）是否可用；缺失则跳过重排。"""
+    global _rerank_deps_available
+    if _rerank_deps_available is None:
+        try:
+            from sentence_transformers import CrossEncoder  # noqa: F401
+            _rerank_deps_available = True
+        except Exception as e:
+            logging.warning(f"[重排] CrossEncoder 不可用，跳过重排: {e}")
+            _rerank_deps_available = False
+    return _rerank_deps_available
+
+
+def _get_reranker():
+    """获取 cross-encoder 重排模型（单例懒加载，模型较大不能每次加载）。"""
+    global _reranker
+    if _reranker is None:
+        from sentence_transformers import CrossEncoder
+        model_name = SEARCH_CONFIG.get("rerank_model", "BAAI/bge-reranker-base")
+        logging.info(f"[重排] 首次加载重排模型: {model_name}（较慢）")
+        local_path = os.environ.get("RERANK_MODEL_LOCAL_PATH", "")
+        _reranker = CrossEncoder(local_path if local_path and os.path.exists(local_path) else model_name)
+        logging.info("[重排] 重排模型加载完成")
+    return _reranker
 
 
 def _tokenize(text: str) -> List[str]:
@@ -289,13 +327,27 @@ def search_chunks(paper_id: str, query: str, k: int = 5, chunks_data: List[Dict[
 
             # ---- RRF 融合 ----
             fused = _rrf_fuse([vec_ranking, bm25_ranking], SEARCH_CONFIG.get("rrf_k", 60))
-            ordered = [idx for idx, _ in fused[:k]]
+            cand_pool = [idx for idx, _ in fused]
             score_map = {idx: s for idx, s in fused}
             mode = "hybrid"
         else:
-            ordered = vec_ranking[:k]
+            cand_pool = vec_ranking
             score_map = vec_scores
             mode = "vector"
+
+        # ---- 方案一：cross-encoder 重排（可选，对候选池前 rerank_top_n 做语义精排） ----
+        if SEARCH_CONFIG.get("use_rerank") and cand_pool and _check_rerank_deps():
+            top_n = SEARCH_CONFIG.get("rerank_top_n", 10)
+            cand_idx = cand_pool[:top_n]
+            pairs = [(query, chunks[i]["content"]) for i in cand_idx]
+            scores = _get_reranker().predict(pairs)
+            reranked = sorted(zip(cand_idx, scores), key=lambda x: x[1], reverse=True)
+            ordered = [int(i) for i, _ in reranked[:k]]
+            score_map = {int(i): float(s) for i, s in reranked}
+            mode += "+rerank"
+        else:
+            # 未开启/依赖缺失：行为与原来完全一致（取候选池前 k 条）
+            ordered = cand_pool[:k]
 
         results = []
         for idx in ordered:

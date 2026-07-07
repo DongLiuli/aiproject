@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePapersStore } from '@/stores/papers'
 import { useUIStore } from '@/stores/ui'
-import { BookOpen, Upload, Settings, User, LogOut, LogIn, Menu, X } from 'lucide-vue-next'
+import { BookOpen, Search, Upload, Settings, User, LogOut, LogIn, Menu, X } from 'lucide-vue-next'
 import AuthModal from './AuthModal.vue'
 
 const authStore = useAuthStore()
@@ -47,13 +47,6 @@ function handleAuthClose(newMode) {
           <span class="logo-text">科研文献解析</span>
         </div>
 
-        <nav class="nav" :class="{ 'nav-visible': showMenu }">
-          <router-link to="/" class="nav-link">
-            <BookOpen class="nav-icon" />
-            <span>文献库</span>
-          </router-link>
-        </nav>
-
         <div class="header-actions">
           <button class="action-btn" @click="uiStore.openUploadModal()">
             <Upload class="action-icon" />
@@ -95,7 +88,19 @@ function handleAuthClose(newMode) {
     </header>
 
     <main class="main-content">
-      <slot></slot>
+      <aside class="rail">
+        <router-link to="/search" class="rail-link">
+          <Search class="rail-icon" />
+          <span>学术搜索</span>
+        </router-link>
+        <router-link to="/library" class="rail-link">
+          <BookOpen class="rail-icon" />
+          <span>知识库</span>
+        </router-link>
+      </aside>
+      <div class="main-inner">
+        <slot></slot>
+      </div>
     </main>
 
     <AuthModal
@@ -120,6 +125,68 @@ function handleAuthClose(newMode) {
   color: white;
   padding: 0 20px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* 双工作区左侧竖排导航 rail */
+.main-content {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.rail {
+  width: 92px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid #e5e7eb;
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rail-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 4px;
+  border-radius: 10px;
+  color: #6b7280;
+  text-decoration: none;
+  font-size: 0.8rem;
+  transition: background 0.2s, color 0.2s;
+}
+
+.rail-link:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.rail-link.router-link-active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+}
+
+.rail-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.main-inner {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .rail {
+    width: 64px;
+    padding: 12px 4px;
+  }
+
+  .rail-link span {
+    display: none;
+  }
 }
 
 .header-content {

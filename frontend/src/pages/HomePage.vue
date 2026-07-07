@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePapersStore } from '@/stores/papers'
 import { useAuthStore } from '@/stores/auth'
@@ -46,7 +46,22 @@ async function loadRecommendations() {
 onMounted(async () => {
   await authStore.initialize()
   await papersStore.fetchPapers()
-  loadRecommendations()
+  // 推荐区已移至学术搜索页，知识库页不再拉取
+  // loadRecommendations()
+
+  // 自动轮询未完成解析的论文（pending/parsing）→ 卡片状态实时刷新到「已完成/失败」。
+  // 学术搜索页「加入知识库」在新标签打开本页，新标签是全新 store 继承不到原标签轮询，
+  // 靠这里自轮询补上；对普通刷新场景同样适用。复用 store 全局的 startPollingMany。
+  const pendingIds = papersStore.papers
+    .filter((p) => p.parse_status === 'pending' || p.parse_status === 'parsing')
+    .map((p) => p.paper_id)
+  if (pendingIds.length) {
+    papersStore.startPollingMany(pendingIds)
+  }
+})
+
+onUnmounted(() => {
+  papersStore.stopPollingMany()
 })
 
 // 搜索走后端 keyword（防抖 300ms），不再只搜当前页
@@ -171,6 +186,7 @@ function startGraph() {
       </div>
     </div>
 
+    <!-- 精选推荐区已移至「学术搜索」页，知识库页不再展示（按需保留，暂注释）
     <section v-if="recommendations.length" class="recommend-section">
       <h2 class="recommend-heading">🔥 精选推荐</h2>
       <div class="recommend-grid">
@@ -184,6 +200,7 @@ function startGraph() {
         />
       </div>
     </section>
+    -->
 
     <div class="page-actions">
       <div class="search-bar">

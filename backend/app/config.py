@@ -24,6 +24,36 @@ def _load_db_url():
 
 DATABASE_URL = _load_db_url()
 
+
+# 可选配置读取：从指定 json 文件取键，缺文件/缺键/解析失败均返回默认值（不强制、不报错）
+def _load_optional_config(filename, key, default=""):
+    config_path = os.path.join(BASE_DIR, filename)
+    if not os.path.exists(config_path):
+        return default
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return default
+    value = config.get(key, default)
+    return value if value is not None else default
+
+
+# OpenAlex 学术检索 —— 匿名即可用（免费），此 key 可选：
+#   OpenAlex 已按调用计量（响应 meta.cost_usd），官方方向为 key + 用量付费。
+#   匿名当前仍放行；填 key 后更稳（免费 key 约 $1/天 额度）。
+#   环境变量 OPENALEX_API_KEY 优先于文件；两者都缺时匿名请求，学术搜索优雅降级。
+#   ⚠️ 与数据库配置分开：单独放 backend/openalex_config.json（gitignore，勿提交真实 key）
+#       内容形如： { "OPENALEX_API_KEY": "<你的key>" }
+OPENALEX_API_KEY = os.environ.get("OPENALEX_API_KEY") or _load_optional_config(
+    "openalex_config.json", "OPENALEX_API_KEY", default=""
+)
+
+# OpenAlex 礼貌联系邮箱（放进 User-Agent，官方建议；非 secret）
+OPENALEX_MAILTO = os.environ.get("OPENALEX_MAILTO") or _load_optional_config(
+    "openalex_config.json", "OPENALEX_MAILTO", default="literature-ai@example.com"
+)
+
 # 文件存储路径
 DATA_DIR = os.path.join(BASE_DIR, "data")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")

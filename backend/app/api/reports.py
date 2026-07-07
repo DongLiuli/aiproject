@@ -152,7 +152,7 @@ def generate_report_endpoint(paper_id: str, body: GenerateReportRequest, user_id
     if report:
         report.content = content
         report.format = "markdown"
-        report.generated_at = datetime.utcnow()
+        report.generated_at = datetime.now()  # 本地时间，与 models.now_local 一致（勿用 utcnow）
     else:
         report = Report(
             report_id=str(uuid.uuid4()),
@@ -227,7 +227,7 @@ def generate_report_stream_endpoint(paper_id: str, body: GenerateReportRequest, 
             if report:
                 report.content = content
                 report.format = "markdown"
-                report.generated_at = datetime.utcnow()
+                report.generated_at = datetime.now()  # 本地时间，与 models.now_local 一致（勿用 utcnow）
             else:
                 report = Report(
                     report_id=str(uuid.uuid4()),

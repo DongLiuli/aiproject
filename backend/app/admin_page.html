@@ -60,7 +60,6 @@ tr:hover { background:#f9fafb; }
 .toast-error { background:#fee2e2; color:#dc2626; }
 @keyframes slideIn { from { transform:translateX(100%); opacity:0; } to { transform:translateX(0); opacity:1; } }
 .empty { text-align:center; padding:40px; color:#9ca3af; }
-/* 数据浏览器样式 */
 .subtab-nav { display:flex; gap:0; margin-bottom:20px; border-bottom:2px solid #e5e7eb; }
 .subtab-item { padding:10px 20px; cursor:pointer; font-size:0.875rem; color:#6b7280; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all 0.15s; }
 .subtab-item:hover { color:#4f46e5; }
@@ -95,7 +94,7 @@ tr:hover { background:#f9fafb; }
 </head>
 <body>
 <div class="header">
-  <h1>⚙️ 管理端</h1>
+  <h1>&#x2699;&#xFE0F; 管理端</h1>
   <div class="header-actions">
     <span id="loginStatus" style="font-size:0.875rem;color:#9ca3af;">未登录</span>
     <button class="btn btn-outline" id="logoutBtn" style="display:none" onclick="logout()">退出</button>
@@ -120,11 +119,11 @@ tr:hover { background:#f9fafb; }
 
 <div class="layout" style="display:none" id="mainLayout">
   <div class="sidebar">
-    <div class="sidebar-item active" onclick="switchTab('stats', this)">📊 系统统计</div>
-    <div class="sidebar-item" onclick="switchTab('papers', this)">📄 论文管理</div>
-    <div class="sidebar-item" onclick="switchTab('recommend', this)">⭐ 推荐管理</div>
-    <div class="sidebar-item" onclick="switchTab('users', this)">👥 用户管理</div>
-    <div class="sidebar-item" onclick="switchTab('db', this)">🗄️ 数据库管理</div>
+    <div class="sidebar-item active" onclick="switchTab('stats', this)">&#x1F4CA; 系统统计</div>
+    <div class="sidebar-item" onclick="switchTab('papers', this)">&#x1F4C4; 论文管理</div>
+    <div class="sidebar-item" onclick="switchTab('recommend', this)">&#x2B50; 推荐管理</div>
+    <div class="sidebar-item" onclick="switchTab('users', this)">&#x1F465; 用户管理</div>
+    <div class="sidebar-item" onclick="switchTab('db', this)">&#x1F5C4;&#xFE0F; 数据库管理</div>
   </div>
   <div class="content" id="tabContent"></div>
 </div>
@@ -132,11 +131,9 @@ tr:hover { background:#f9fafb; }
 <div id="toastContainer"></div>
 
 <script>
-// ========== 状态 ==========
 let token = localStorage.getItem('admin_token');
 let currentTab = 'stats';
 
-// ========== 工具函数 ==========
 async function api(method, path, body) {
   const headers = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -167,7 +164,6 @@ function statusBadge(s) {
   return `<span class="badge ${map[s]||''}">${s||'-'}</span>`;
 }
 
-// ========== 登录 ==========
 if (token) { checkAndEnter(); }
 
 async function login() {
@@ -209,7 +205,6 @@ function logout() {
   location.reload();
 }
 
-// ========== 标签切换 ==========
 function switchTab(tab, el) {
   currentTab = tab;
   document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
@@ -226,7 +221,6 @@ async function renderTab() {
   else if (currentTab === 'db') { c.innerHTML = await renderDB(); await renderDBSubContent(); }
 }
 
-// ========== 统计 ==========
 async function renderStats() {
   try {
     const d = await api('GET', '/api/admin/stats');
@@ -247,7 +241,6 @@ async function renderStats() {
   } catch(e) { return `<div class="empty">加载失败: ${e.message}</div>`; }
 }
 
-// ========== 论文 ==========
 async function renderPapers() {
   try {
     const d = await api('GET', '/api/admin/papers?page=1&size=50');
@@ -284,7 +277,6 @@ async function searchPapers() {
   if (st) params.set('status', st);
   try {
     const d = await api('GET', '/api/admin/papers?' + params);
-    // Simple re-render by re-rendering whole tab
     renderTab();
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -298,11 +290,10 @@ async function deletePaper(id) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// ========== 推荐管理（功能 C） ==========
 async function renderRecommend() {
   try {
     const d = await api('GET', '/api/admin/recommendations');
-    let recHtml = `<div class="card"><h3>⭐ 当前推荐位（${d.total} 篇）</h3>`;
+    let recHtml = `<div class="card"><h3>&#x2B50; 当前推荐位（${d.total} 篇）</h3>`;
     if (!d.items.length) {
       recHtml += `<div class="empty">暂无推荐，下方搜索论文添加</div>`;
     } else {
@@ -325,7 +316,7 @@ async function renderRecommend() {
     }
     recHtml += `</div>`;
 
-    const addHtml = `<div class="card"><h3>➕ 添加推荐</h3>
+    const addHtml = `<div class="card"><h3>&#x2795; 添加推荐</h3>
       <div class="search-bar">
         <input id="recSearch" placeholder="搜索标题或文件名..." onkeydown="if(event.key==='Enter')searchCandidates()" />
         <button class="btn btn-outline" onclick="searchCandidates()">搜索</button>
@@ -354,7 +345,7 @@ async function searchCandidates() {
         <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.title||p.file_name||'-'}</td>
         <td>${p.field||'-'}</td>
         <td>${statusBadge(p.parse_status)}</td>
-        <td>${isRec ? '✅ 已推荐' : '—'}</td>
+        <td>${isRec ? '&#x2705; 已推荐' : '—'}</td>
         <td>${isRec
           ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:0.75rem" onclick="unsetRecommend('${p.paper_id}')">取消</button>`
           : `<button class="btn btn-primary" style="padding:4px 10px;font-size:0.75rem" onclick="setRecommend('${p.paper_id}')">设为推荐</button>`}</td>
@@ -393,7 +384,6 @@ async function changeOrder(id, cur) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// ========== 用户 ==========
 async function renderUsers() {
   try {
     const d = await api('GET', '/api/admin/users?include_anonymous=false&page=1&size=50');
@@ -437,10 +427,9 @@ async function deleteUser(uid) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// ========== 数据库 ==========
-let dbSubTab = 'overview'; // 'overview' | 'browse'
+let dbSubTab = 'overview';
 let browserTable = null;
-let browserData = null;       // { items, columns, pk, page, total, size }
+let browserData = null;
 let editingRowId = null;
 let editingValues = {};
 
@@ -448,20 +437,18 @@ async function renderDB() {
   return `
     <div class="card">
       <div class="subtab-nav">
-        <div class="subtab-item ${dbSubTab === 'overview' ? 'active' : ''}" onclick="dbSubTab='overview';renderTab()">📋 数据库概况</div>
-        <div class="subtab-item ${dbSubTab === 'browse' ? 'active' : ''}" onclick="dbSubTab='browse';renderTab()">🔍 数据浏览</div>
+        <div class="subtab-item ${dbSubTab === 'overview' ? 'active' : ''}" onclick="dbSubTab='overview';renderTab()">&#x1F4CB; 数据库概况</div>
+        <div class="subtab-item ${dbSubTab === 'browse' ? 'active' : ''}" onclick="dbSubTab='browse';renderTab()">&#x1F50D; 数据浏览</div>
       </div>
       <div id="dbSubContent"></div>
     </div>`;
 }
 
-// 由 renderTab 更新后调用
 async function renderDBSubContent() {
   const el = document.getElementById('dbSubContent');
   if (!el) return;
   if (dbSubTab === 'overview') el.innerHTML = await renderDBOverview();
   else if (dbSubTab === 'browse') el.innerHTML = await renderDBBrowser();
-  // 如果浏览器已选了表，再加载数据
   if (dbSubTab === 'browse' && browserTable) await loadBrowserTable();
 }
 
@@ -511,8 +498,6 @@ async function restoreDB(filename) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// ========== 数据浏览器 ==========
-
 async function renderDBBrowser() {
   let tablesHtml = '';
   try {
@@ -526,11 +511,11 @@ async function renderDBBrowser() {
   return `
     <div class="browser-layout">
       <div class="table-selector">
-        <h4>📦 表列表</h4>
+        <h4>&#x1F4E6; 表列表</h4>
         ${tablesHtml}
       </div>
       <div class="data-area" id="dataArea">
-        ${browserTable ? '<p style="color:#9ca3af;text-align:center;padding:60px;">加载中…</p>' : '<div class="empty">← 左侧选择一张表开始浏览</div>'}
+        ${browserTable ? '<p style="color:#9ca3af;text-align:center;padding:60px;">加载中…</p>' : '<div class="empty">&#x2190; 左侧选择一张表开始浏览</div>'}
       </div>
     </div>`;
 }
@@ -541,7 +526,7 @@ async function loadBrowserTable() {
 
   try {
     const page = browserData && browserData.table === browserTable ? browserData.page : 1;
-    browserTable = browserTable; // ensure
+    browserTable = browserTable;
     browserData = await api('GET', `/api/admin/db/table/${browserTable}?page=${page}&size=20`);
 
     const cols = browserData.columns;
@@ -549,7 +534,6 @@ async function loadBrowserTable() {
     const maxPage = Math.ceil(total / browserData.size) || 1;
     area.innerHTML = buildDataTable(browserData);
 
-    // bind events
     bindBrowserEvents();
   } catch(e) {
     area.innerHTML = `<div class="empty">加载失败: ${e.message}</div>`;
@@ -561,19 +545,17 @@ function buildDataTable(data) {
   const pk = data.pk;
   let html = '';
 
-  // 工具栏
   html += `<div class="toolbar">
     <span style="font-weight:600;font-size:1rem;">${data.table}</span>
     <span class="column-info">${cols.length}列 · ${data.total}行</span>
-    <button class="btn btn-primary" onclick="showAddRowModal()">➕ 添加行</button>
-    <button class="btn btn-outline" style="margin-left:auto" onclick="loadBrowserTable()">🔄 刷新</button>
+    <button class="btn btn-primary" onclick="showAddRowModal()">&#x2795; 添加行</button>
+    <button class="btn btn-outline" style="margin-left:auto" onclick="loadBrowserTable()">&#x1F504; 刷新</button>
   </div>`;
 
-  // 表格
   html += '<div class="table-wrap"><table class="data-table"><thead><tr>';
   html += '<th style="width:32px">#</th>';
   for (const c of cols) {
-    const pkMark = (c.pk) ? ' 🔑' : '';
+    const pkMark = (c.pk) ? ' &#x1F511;' : '';
     html += `<th title="${c.type}${c.pk ? ' (主键)' : ''}${c.nullable ? '' : ' NOT NULL'}">${c.name}${pkMark}</th>`;
   }
   html += '<th style="width:80px">操作</th>';
@@ -620,7 +602,6 @@ function buildDataTable(data) {
 
   html += '</tbody></table></div>';
 
-  // 分页
   const maxPage = Math.ceil(data.total / data.size) || 1;
   html += `<div class="pagination">
     <button class="btn btn-outline" ${data.page <= 1 ? 'disabled' : ''} onclick="browserData.page=1;loadBrowserTable()">首页</button>
@@ -634,15 +615,11 @@ function buildDataTable(data) {
 }
 
 function bindBrowserEvents() {
-  // Nothing extra needed; events are inline onclick
 }
-
-// ========== 行操作 ==========
 
 function editRow(rowId) {
   editingRowId = String(rowId);
   editingValues = {};
-  // pre-fill with current values
   const row = browserData.items.find(r => String(r[browserData.pk]) === editingRowId);
   if (row) {
     for (const c of browserData.columns) {
@@ -676,8 +653,6 @@ async function deleteRow(rowId) {
     loadBrowserTable();
   } catch(e) { toast(e.message, 'error'); }
 }
-
-// ========== 添加行模态框 ==========
 
 function showAddRowModal() {
   const cols = browserData.columns.filter(c => !c.pk);

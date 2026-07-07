@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomePage from '@/pages/HomePage.vue'
+import SearchPage from '@/pages/SearchPage.vue'
 import PaperDetailPage from '@/pages/PaperDetailPage.vue'
 import ComparePage from '@/pages/ComparePage.vue'
 import GraphPage from '@/pages/GraphPage.vue'
@@ -9,7 +10,16 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'home',
+      redirect: '/search'
+    },
+    {
+      path: '/search',
+      name: 'search',
+      component: SearchPage
+    },
+    {
+      path: '/library',
+      name: 'library',
       component: HomePage
     },
     {

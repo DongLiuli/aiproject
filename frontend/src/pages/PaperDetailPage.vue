@@ -38,7 +38,7 @@ onMounted(async () => {
   }
 })
 function goBack() {
-  router.push('/')
+  router.push('/library')
 }
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
@@ -187,25 +187,26 @@ const formatSize = (bytes) => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 24px;
+  padding: 16px 24px; /* 👈 减小顶部内边距（原来是 24px） */
   box-sizing: border-box;
 }
 
 .detail-header {
-  margin-bottom: 16px;
+  margin-bottom: 8px; /* 👈 减小底部间距（原来是 16px） */
   flex-shrink: 0;
 }
 
 .back-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: none;
   border: none;
   color: #667eea;
-  font-size: 0.9375rem;
+  font-size: 0.85rem; /* 👈 稍微减小字体（原来是 0.9375rem） */
   cursor: pointer;
   transition: color 0.2s;
+  padding: 4px 0; /* 👈 减少按钮自身占用的空间 */
 }
 
 .back-btn:hover {
@@ -213,26 +214,26 @@ const formatSize = (bytes) => {
 }
 
 .back-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px; /* 👈 减小图标（原来是 18px） */
+  height: 16px;
 }
 
 .paper-header {
   display: flex;
-  gap: 20px;
-  padding: 24px;
+  gap: 16px; /* 👈 减小间距（原来是 20px） */
+  padding: 14px 20px; /* 👈 减小内边距（原来是 24px） */
   background: white;
-  border-radius: 16px;
+  border-radius: 12px; /* 👈 稍微减小圆角（原来是 16px） */
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  margin-bottom: 16px;
+  margin-bottom: 12px; /* 👈 减小底部间距（原来是 16px） */
   flex-shrink: 0;
 }
 
 .paper-icon {
-  width: 64px;
-  height: 64px;
+  width: 48px; /* 👈 减小图标容器（原来是 64px） */
+  height: 48px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 16px;
+  border-radius: 12px; /* 👈 减小圆角（原来是 16px） */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -240,8 +241,8 @@ const formatSize = (bytes) => {
 }
 
 .icon {
-  width: 32px;
-  height: 32px;
+  width: 24px; /* 👈 减小图标（原来是 32px） */
+  height: 24px;
   color: white;
 }
 
@@ -250,37 +251,38 @@ const formatSize = (bytes) => {
 }
 
 .paper-title {
-  font-size: 1.5rem;
+  font-size: 1.2rem; /* 👈 减小标题字体（原来是 1.5rem） */
   font-weight: 700;
   color: #1a1a1a;
-  margin: 0 0 16px 0;
+  margin: 0 0 8px 0; /* 👈 减小底部间距（原来是 16px） */
 }
 
 .meta-info {
   display: flex;
   flex-wrap: wrap;
-  gap: 20px;
+  gap: 12px; /* 👈 减小间距（原来是 20px） */
 }
 
 .meta-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.9375rem;
+  gap: 4px; /* 👈 减小间距（原来是 8px） */
+  font-size: 0.85rem; /* 👈 减小字体（原来是 0.9375rem） */
   color: #666;
 }
 
 .meta-icon {
-  width: 18px;
-  height: 18px;
+  width: 14px; /* 👈 减小图标（原来是 18px） */
+  height: 14px;
 }
 
 .status-badge {
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 0.875rem;
+  padding: 4px 12px; /* 👈 减小内边距（原来是 8px 16px） */
+  border-radius: 16px; /* 👈 减小圆角（原来是 20px） */
+  font-size: 0.8rem; /* 👈 减小字体（原来是 0.875rem） */
   font-weight: 500;
   flex-shrink: 0;
+  align-self: center; /* 👈 垂直居中 */
 }
 
 .status-uploaded {
@@ -329,20 +331,20 @@ const formatSize = (bytes) => {
 
 .pane-switch {
   display: flex;
-  gap: 12px;
+  gap: 8px; /* 👈 减小间距（原来是 12px） */
   flex-shrink: 0;
 }
 
 .switch-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
+  gap: 6px; /* 👈 减小间距（原来是 8px） */
+  padding: 8px 16px; /* 👈 减小内边距（原来是 12px 20px） */
   background: white;
   border: 1px solid #e0e0e0;
-  border-radius: 12px;
+  border-radius: 10px; /* 👈 减小圆角（原来是 12px） */
   cursor: pointer;
-  font-size: 0.9375rem;
+  font-size: 0.85rem; /* 👈 减小字体（原来是 0.9375rem） */
   font-weight: 500;
   color: #666;
   transition: all 0.2s;
@@ -360,11 +362,10 @@ const formatSize = (bytes) => {
 }
 
 .switch-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px; /* 👈 减小图标（原来是 18px） */
+  height: 16px;
 }
 
-/* 子组件根元素：填满右栏剩余高度，内部各自滚动 */
 .pane-body {
   flex: 1;
   min-height: 0;
@@ -397,12 +398,16 @@ const formatSize = (bytes) => {
   }
 
   .paper-title {
-    font-size: 1.25rem;
+    font-size: 1.1rem;
   }
 
   .meta-info {
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
+  }
+
+  .status-badge {
+    align-self: flex-start;
   }
 }
 </style>

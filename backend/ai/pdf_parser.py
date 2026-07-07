@@ -1,8 +1,25 @@
 """PDF 解析模块 - 改进版"""
 import fitz  # PyMuPDF
 import re
+import logging
+import threading
+import unicodedata
 from typing import Dict, List, Any, Tuple
 from .config import CHUNK_CONFIG
+
+logger = logging.getLogger(__name__)
+
+# PyMuPDF 的 find_tables 依赖模块级全局 TEXTPAGE（pymupdf/table.py），非线程安全。
+# FastAPI 把解析后台任务丢进线程池并发执行，两个 find_tables 并发会互相踩坏 TEXTPAGE
+# → "not a textpage of this page"。用模块级锁串行化这一个调用即可根治。
+_FIND_TABLES_LOCK = threading.Lock()
+
+# 扫描件判定阈值（折进主循环统计，零额外遍历）
+SCAN_TEXT_MIN = 50            # 页文字少于此视为"低文字页"
+FULL_PAGE_IMAGE_RATIO = 0.8  # 单图 bbox 面积 / 页面积 ≥ 此视为"整页图"
+SCAN_PAGE_FRACTION = 0.6     # 扫描页占全篇比例 ≥ 此才判整篇扫描件
+# 章节标题防御上限（正常标题很短，超长必是解析噪声）
+MAX_SECTION_TITLE_LEN = 200
 
 
 def parse_pdf(file_path: str) -> Dict[str, Any]:
@@ -25,18 +42,12 @@ def parse_pdf(file_path: str) -> Dict[str, Any]:
             "error": f"无法打开 PDF 文件: {str(e)}"
         }
     
-    # 2. 检查是否是扫描件
-    if _is_scanned_pdf(doc):
-        doc.close()
-        return {
-            "success": False,
-            "error": "检测到扫描件 PDF，无法提取文本内容。请使用 OCR 工具处理。"
-        }
-    
+    # 2. 扫描件判定改为折进主循环统计（见下方 scanned_pages），此处不再预检
     full_text = ""
     sections = []
     figures_tables = []
     references_raw = ""
+    scanned_pages = 0  # 累积"整页图+无文字"的页数，循环后按占比判定扫描件
     
     # 3. 章节标题模式匹配（扩展版）
     section_patterns = [
@@ -98,7 +109,13 @@ def parse_pdf(file_path: str) -> Dict[str, Any]:
         
         # 提取文本内容
         page_text = _extract_text_from_blocks(sorted_blocks)
-        
+        # #6 Unicode 归一化：连字 ﬁ/ﬂ→fi/fl、全角→半角，净化下游 BM25/向量/LLM 输入
+        page_text = unicodedata.normalize("NFKC", page_text)
+
+        # 扫描件信号：复用已取的 page_text 与页面图片，主循环内累积（无额外遍历）
+        if _page_is_scan(page, page_text):
+            scanned_pages += 1
+
         if not page_text.strip():
             continue
         
@@ -120,7 +137,8 @@ def parse_pdf(file_path: str) -> Dict[str, Any]:
             # 7. 检测章节标题
             is_section = False
             for pattern in section_patterns:
-                if re.match(pattern, paragraph, re.MULTILINE):
+                m = re.match(pattern, paragraph, re.MULTILINE)
+                if m:
                     # 保存上一个章节
                     if current_section:
                         sections.append({
@@ -129,9 +147,12 @@ def parse_pdf(file_path: str) -> Dict[str, Any]:
                             "page_start": current_section_page,
                             "page_end": page_num + 1
                         })
-                    
-                    current_section = paragraph
-                    current_section_content = ""
+
+                    # #2 只取匹配到的标题行；PyMuPDF 有时把"标题+正文"返回成一个 block，
+                    # 之前 current_section = paragraph 会把整段正文当标题 → section_title 溢出。
+                    current_section = m.group(0).strip()[:MAX_SECTION_TITLE_LEN]
+                    remainder = paragraph[m.end():].strip()  # 标题行之后的正文并入内容
+                    current_section_content = (remainder + "\n") if remainder else ""
                     current_section_page = page_num + 1
                     is_section = True
                     break
@@ -155,15 +176,24 @@ def parse_pdf(file_path: str) -> Dict[str, Any]:
             "page_end": len(doc)
         })
     
-    # 9. 验证解析结果
+    page_count = len(doc)
+
+    # 9. 扫描件判定：多数页面都是"整页图 + 无文字"才判扫描件（单页大图不误杀）
+    if page_count and scanned_pages / page_count >= SCAN_PAGE_FRACTION:
+        doc.close()
+        return {
+            "success": False,
+            "error": "检测到扫描件 PDF，无法提取文本内容。请使用 OCR 工具处理。"
+        }
+
+    # 10. 验证解析结果
     if not sections and not full_text.strip():
         doc.close()
         return {
             "success": False,
             "error": "PDF 文件似乎没有可提取的文本内容"
         }
-    
-    page_count = len(doc)
+
     doc.close()
     
     # 拆分参考文献
@@ -220,26 +250,30 @@ def _validate_pdf_file(file_path: str) -> Dict[str, Any]:
     return {"success": True}
 
 
-def _is_scanned_pdf(doc: fitz.Document) -> bool:
+def _page_is_scan(page: fitz.Page, page_text: str) -> bool:
     """
-    检查是否是扫描件 PDF
-    
-    :param doc: PDF 文档对象
-    :return: 是否是扫描件
+    判断单页是否为"扫描页"：文字极少，且被一张接近整页的图覆盖。
+
+    区别于"正常论文里的插图"——正常图只占页面一部分；扫描页是整页一张图。
+    有足够文字则直接早退（不查图，省成本）。由 parse_pdf 主循环逐页调用累积，
+    再按 SCAN_PAGE_FRACTION 占比判定整篇是否扫描件（单页大图不会误杀）。
+
+    :param page: 页面对象
+    :param page_text: 该页已提取（并归一化）的文本
+    :return: 该页是否为扫描页
     """
+    if len(page_text.strip()) >= SCAN_TEXT_MIN:
+        return False
     try:
-        # 检查前几页的文本内容
-        for page_num in range(min(3, len(doc))):
-            page = doc[page_num]
-            text = page.get_text("text")
-            
-            # 如果文本很少，可能是扫描件
-            if len(text.strip()) < 50:
-                # 检查是否有图片
-                images = page.get_images(full=True)
-                if images:
-                    return True
-        
+        area = abs(page.rect.width * page.rect.height)
+        if area <= 0:
+            return False
+        for info in page.get_image_info():
+            b = info.get("bbox")
+            if not b:
+                continue
+            if abs((b[2] - b[0]) * (b[3] - b[1])) / area >= FULL_PAGE_IMAGE_RATIO:
+                return True
         return False
     except Exception:
         return False
@@ -374,7 +408,15 @@ def _detect_figures_tables(page: fitz.Page, page_num: int, start_index: int) -> 
             })
     
     # 检测表格并提取表题
-    tables = page.find_tables()
+    # 加锁串行化（find_tables 非线程安全，见文件顶部 _FIND_TABLES_LOCK 说明）；
+    # 表格检测非核心，任何失败都降级为"无表格"而不中断整篇解析
+    tables = []
+    try:
+        with _FIND_TABLES_LOCK:
+            tables = list(page.find_tables())
+    except Exception as e:
+        logger.warning(f"find_tables 失败，跳过本页表格检测 (page {page_num + 1}): {e}")
+        tables = []
     detected_tables = []
     
     for pattern in table_patterns:
@@ -520,7 +562,37 @@ def chunk_text(text: str, section_title: str = "", page_number: int = 0) -> List
         paragraph = paragraph.strip()
         if not paragraph:
             continue
-        
+
+        # 单段超长（PDF 偶尔把整节正文/图注堆成一个无空行的大 block，split('\n\n') 拆不开）：
+        # chunk_size 只在段落之间判断、从不在段落内部切，这种大段会整块穿过去 → 生成超大 chunk
+        # → 撑爆 MySQL TEXT(64KB)，且嵌入模型(512 token)会截断。这里先冲刷当前块，再按 chunk_size
+        # 带重叠硬切，尾巴留给后文继续合并。
+        if len(paragraph) > chunk_size:
+            if current_chunk and len(current_chunk.strip()) >= min_chunk_size:
+                chunks.append({
+                    "content": current_chunk.strip(),
+                    "section_title": section_title,
+                    "page_number": page_number,
+                    "paragraph_index": paragraph_index
+                })
+                paragraph_index += 1
+            current_chunk = ""
+            step = max(1, chunk_size - chunk_overlap)
+            start = 0
+            while len(paragraph) - start > chunk_size:
+                piece = paragraph[start:start + chunk_size].strip()
+                if len(piece) >= min_chunk_size:
+                    chunks.append({
+                        "content": piece,
+                        "section_title": section_title,
+                        "page_number": page_number,
+                        "paragraph_index": paragraph_index
+                    })
+                    paragraph_index += 1
+                start += step
+            current_chunk = paragraph[start:] + "\n\n"  # 尾巴（≤ chunk_size）留给后文合并
+            continue
+
         # 如果当前块加上新段落超过阈值，保存当前块
         if len(current_chunk) + len(paragraph) > chunk_size and current_chunk:
             if len(current_chunk) >= min_chunk_size:

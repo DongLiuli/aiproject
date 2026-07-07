@@ -943,7 +943,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="graph-page">
     <header class="graph-header">
-      <button class="back-btn" @click="router.push('/')">
+      <button class="back-btn" @click="router.push('/library')">
         <ArrowLeft class="icon" />
         <span>返回</span>
       </button>
@@ -1014,7 +1014,7 @@ onBeforeUnmount(() => {
       <Info class="info-icon" />
       <h2>暂无可展示的关系</h2>
       <p>需要至少几篇已解析论文，且论文间存在引用或共用数据集/方法时才会形成图谱。</p>
-      <button class="retry-btn" @click="router.push('/')">去上传/解析论文</button>
+      <button class="retry-btn" @click="router.push('/library')">去上传/解析论文</button>
     </div>
 
     <!-- 图谱主体 -->

@@ -8,6 +8,7 @@ from typing import Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, BackgroundTasks
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -159,6 +160,26 @@ def get_recommendations(
     items = []
     seen = set()  # 已入选的 paper_id，去重
 
+    def _abstract_of(paper):
+        """推荐卡右侧展示用的摘要——展示论文原文（不翻译）：
+        优先取解析出的 Abstract/摘要章节原文，无则退而取全文开头。
+        截断 600 字，前端再按窗口高度裁前段。未解析完则返回空串。"""
+        info = getattr(paper, "structured_info", None)
+        if not info:
+            return ""
+        # sections 存为 JSON 字符串，用模型自带的容错反序列化
+        sections = info._try_json(info.sections, []) or []
+        abstract_keys = ("abstract", "摘要")
+        for sec in sections:
+            title = (sec.get("title") or "").strip().lower()
+            if any(k in title for k in abstract_keys):
+                content = (sec.get("content") or "").strip()
+                if content:
+                    return content[:600]
+        # 兜底：全文开头（原文语言）
+        full = (info.full_text or "").strip()
+        return full[:600] if full else ""
+
     # 1) 管理员推荐位：跨用户，按 recommend_order 升序（NULL 排最后），再按上传时间倒序
     admin_papers = (
         db.query(Paper)
@@ -175,7 +196,8 @@ def get_recommendations(
         if p.paper_id in seen:
             continue
         seen.add(p.paper_id)
-        items.append({**p.to_dict(), "reason": "管理员精选", "recommend_source": "admin"})
+        items.append({**p.to_dict(), "reason": "管理员精选", "recommend_source": "admin",
+                      "abstract": _abstract_of(p)})
 
     # 2) 标签匹配补足：不足 limit 时，用当前用户近期论文的 field/tags 给「其它论文」打分
     if len(items) < limit:
@@ -233,7 +255,8 @@ def get_recommendations(
                 if len(items) >= limit:
                     break
                 seen.add(c.paper_id)
-                items.append({**c.to_dict(), "reason": reason, "recommend_source": "tag"})
+                items.append({**c.to_dict(), "reason": reason, "recommend_source": "tag",
+                              "abstract": _abstract_of(c)})
 
     return {"items": items}
 
@@ -270,6 +293,29 @@ def get_paper(paper_id: str, user_id: str = Depends(get_current_user)):
     result["conversation_count"] = conv_count
 
     return result
+
+
+@router.get("/{paper_id}/download")
+def download_paper_pdf(paper_id: str, user_id: str = Depends(get_current_user)):
+    """返回论文原始 PDF 文件（前端 PDF 视图在 IndexedDB 无缓存时回源于此）。
+
+    归属校验与 get_paper 一致：本人论文，或管理员推荐位（is_recommended）论文放行。
+    直接上传的论文前端本地已缓存 PDF，一般不走这里；学术搜索导入的论文 PDF 只在
+    服务器磁盘（file_path），必须靠此端点才能在浏览器打开。
+    """
+    db = next(get_db())
+    paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+    if not paper or (paper.user_id != user_id and not paper.is_recommended):
+        raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
+
+    if not paper.file_path or not os.path.exists(paper.file_path):
+        raise HTTPException(404, detail={"error": {"code": "FILE_NOT_FOUND", "message": "PDF 文件不存在"}})
+
+    return FileResponse(
+        paper.file_path,
+        media_type="application/pdf",
+        filename=paper.file_name or f"{paper_id}.pdf",
+    )
 
 
 @router.put("/{paper_id}")
@@ -375,12 +421,24 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         if not paper:
             return
 
+        # 先取出后续要用的字段：commit 后 expire_on_commit 会过期实例属性，
+        # 再访问 paper.file_path 会触发惰性重载；若解析途中论文被 delete_paper 删掉，
+        # 该行已不存在 → ObjectDeletedError。用本地变量规避这一次重载。
+        file_path = paper.file_path
         paper.parse_status = "parsing"
         db.commit()
 
+        # #1 幂等清理：删本论文旧的结构化信息/分块/向量索引，避免重解析时
+        #    PaperStructuredInfo.paper_id 唯一约束冲突、chunks 叠加与 FAISS 错位。
+        db.query(Chunk).filter(Chunk.paper_id == paper_id).delete()
+        db.query(PaperStructuredInfo).filter(PaperStructuredInfo.paper_id == paper_id).delete()
+        db.commit()
+        from ai.knowledge_base import delete_index
+        delete_index(paper_id)
+
         # ① PDF 文本提取
         from ai.pdf_parser import parse_pdf
-        parse_result = parse_pdf(paper.file_path)
+        parse_result = parse_pdf(file_path)
         if not parse_result.get("success"):
             paper.parse_status = "failed"
             paper.parse_error = parse_result.get("error", "PDF 解析失败")
@@ -406,16 +464,42 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         from ai.llm_client import LLMClient
         llm_client = LLMClient(api_key=api_key, provider=provider)
 
-        # ③ 结构化信息抽取
+        # ③ 知识库构建（方案2A：提前到抽取之前，供检索式抽取按字段选材）
+        from ai.knowledge_base import build_knowledge_base
+        kb_result = build_knowledge_base(paper_id, sections)
+        chunks_for_db = None
+        kb_warning = None
+        if kb_result.get("success"):
+            chunks_for_db = kb_result.get("chunks", [])
+            # 将分块数据写入 chunks 表，供 search_chunks 检索
+            for c in chunks_for_db:
+                chunk = Chunk(
+                    paper_id=c["paper_id"],
+                    section_title=(c.get("section_title") or "")[:500],  # 防越界 VARCHAR(500)
+                    page_number=c["page_number"],
+                    paragraph_index=c["paragraph_index"],
+                    content=c["content"],
+                )
+                db.add(chunk)
+            db.commit()
+        else:
+            # 建库失败：抽取自动降级为采样模式（chunks_for_db=None），不阻断解析
+            logger.warning(f"知识库构建警告: {kb_result.get('error')}")
+            kb_warning = kb_result.get("error")
+
+        # ④ 结构化信息抽取（方案2A：检索式，传入 chunks_data + paper_id；无库时降级采样）
         from ai.info_extractor import extract_structured_info
-        info_data = extract_structured_info(full_text, sections, llm_client)
+        info_data = extract_structured_info(
+            full_text, sections, llm_client,
+            chunks_data=chunks_for_db, paper_id=paper_id,
+        )
         if not info_data.get("success"):
             paper.parse_status = "failed"
             paper.parse_error = info_data.get("error", "信息抽取失败")
             db.commit()
             return
 
-        # ④ 入库（list/dict 字段用 json.dumps 序列化，兼容 Text 列）
+        # ⑤ 入库（list/dict 字段用 json.dumps 序列化，兼容 Text 列）
         def _safe_json(val):
             """如果不是字符串也不是 None，序列化为 JSON 字符串"""
             if val is None or isinstance(val, str):
@@ -445,27 +529,9 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         paper.title = title
         if authors:
             paper.authors = authors
-        db.commit()
-
-        # ⑤ 知识库构建
-        from ai.knowledge_base import build_knowledge_base
-        kb_result = build_knowledge_base(paper_id, sections)
-        if kb_result.get("success"):
-            # 将分块数据写入 chunks 表，供 search_chunks 检索
-            for c in kb_result.get("chunks", []):
-                chunk = Chunk(
-                    paper_id=c["paper_id"],
-                    section_title=c["section_title"],
-                    page_number=c["page_number"],
-                    paragraph_index=c["paragraph_index"],
-                    content=c["content"],
-                )
-                db.add(chunk)
-            paper.parse_status = "completed"
-        else:
-            logger.warning(f"知识库构建警告: {kb_result.get('error')}")
-            paper.parse_status = "completed"
-            paper.parse_error = f"知识库部分: {kb_result.get('error')}"
+        paper.parse_status = "completed"
+        if kb_warning:
+            paper.parse_error = f"知识库部分: {kb_warning}"
         db.commit()
 
     except Exception as e:

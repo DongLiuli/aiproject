@@ -141,7 +141,7 @@ function downloadComparison() {
 }
 
 function goBack() {
-  router.push({ name: 'home' })
+  router.push({ name: 'library' })
 }
 
 onMounted(() => {
