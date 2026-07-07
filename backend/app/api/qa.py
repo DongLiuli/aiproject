@@ -34,8 +34,8 @@ def ask_question(paper_id: str, body: AskRequest, user_id: str = Depends(get_cur
     """论文问答"""
     db = next(get_db())
 
-    paper = db.query(Paper).filter(Paper.paper_id == paper_id, Paper.user_id == user_id).first()
-    if not paper:
+    paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+    if not paper or (paper.user_id != user_id and not paper.is_recommended):
         raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
     if paper.parse_status != "completed":
         raise HTTPException(400, detail={"error": {"code": "PARSE_NOT_DONE", "message": "论文尚未完成解析，无法问答"}})
@@ -93,8 +93,8 @@ def ask_question_stream(paper_id: str, body: AskRequest, user_id: str = Depends(
     """论文问答（流式 SSE）：逐字返回答案，流结束时落库"""
     db = next(get_db())
 
-    paper = db.query(Paper).filter(Paper.paper_id == paper_id, Paper.user_id == user_id).first()
-    if not paper:
+    paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+    if not paper or (paper.user_id != user_id and not paper.is_recommended):
         raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
     if paper.parse_status != "completed":
         raise HTTPException(400, detail={"error": {"code": "PARSE_NOT_DONE", "message": "论文尚未完成解析，无法问答"}})

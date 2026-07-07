@@ -106,6 +106,11 @@ export const papersAPI = {
     return api.post(`/api/papers/${paperId}/reparse`)
   },
 
+  // 收藏推荐论文到「我的知识库」：后端各存一份完整副本，返回新 paper_id
+  collect(paperId) {
+    return api.post(`/api/papers/${paperId}/collect`)
+  },
+
   downloadPdf(paperId) {
     return axios.get(`${API_BASE_URL}/api/papers/${paperId}/download`, {
       responseType: 'blob',

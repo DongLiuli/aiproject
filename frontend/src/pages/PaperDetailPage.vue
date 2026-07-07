@@ -10,7 +10,10 @@ import {
   Calendar,
   MessageSquare,
   FileOutput,
+  Bookmark,
+  Check,
 } from 'lucide-vue-next'
+import { papersAPI } from '@/api'
 import PaperContent from '@/components/PaperContent.vue'
 import QAInterface from '@/components/QAInterface.vue'
 import ReportPanel from '@/components/ReportPanel.vue'
@@ -39,6 +42,27 @@ onMounted(async () => {
 })
 function goBack() {
   router.push('/library')
+}
+
+// 收藏推荐论文到「我的知识库」：仅在看他人推荐论文（is_owner=false）时可用。
+// 不防重——每次点击后端各存一份；按钮态仅本地维护，刷新后复位。
+const collecting = ref(false)
+const collectedId = ref(null)
+const collectMsg = ref('')
+async function collectPaper() {
+  if (collecting.value || collectedId.value) return
+  collecting.value = true
+  collectMsg.value = ''
+  try {
+    const res = await papersAPI.collect(paperId.value)
+    collectedId.value = res.paper_id
+    collectMsg.value = '已加入你的知识库'
+  } catch (e) {
+    collectMsg.value =
+      e?.userMessage || e?.response?.data?.detail?.error?.message || '收藏失败，请稍后重试'
+  } finally {
+    collecting.value = false
+  }
 }
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
@@ -70,6 +94,26 @@ const formatSize = (bytes) => {
           <ArrowLeft class="back-icon" />
           <span>返回</span>
         </button>
+
+        <!-- 收藏区：仅看他人推荐论文时显示（is_owner=false） -->
+        <div v-if="paper.is_owner === false" class="collect-area">
+          <span v-if="collectMsg" class="collect-msg">{{ collectMsg }}</span>
+          <a
+            v-if="collectedId"
+            class="go-view-link"
+            @click.prevent="router.push(`/papers/${collectedId}`)"
+          >去查看 →</a>
+          <button
+            class="collect-btn"
+            :class="{ 'is-collected': !!collectedId }"
+            :disabled="collecting || !!collectedId"
+            @click="collectPaper"
+          >
+            <Check v-if="collectedId" class="collect-icon" />
+            <Bookmark v-else class="collect-icon" />
+            <span>{{ collectedId ? '已收藏' : collecting ? '收藏中…' : '收藏到我的知识库' }}</span>
+          </button>
+        </div>
       </div>
 
       <div class="paper-header">
@@ -194,6 +238,67 @@ const formatSize = (bytes) => {
 .detail-header {
   margin-bottom: 8px; /* 👈 减小底部间距（原来是 16px） */
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* 返回按钮靠左，收藏区靠右 */
+}
+
+/* 收藏区（看他人推荐论文时） */
+.collect-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.collect-msg {
+  font-size: 0.82rem;
+  color: #047857;
+}
+
+.go-view-link {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #4f46e5;
+  cursor: pointer;
+}
+
+.go-view-link:hover {
+  text-decoration: underline;
+}
+
+.collect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid #7c3aed;
+  border-radius: 8px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.collect-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.collect-btn.is-collected {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+  cursor: default;
+}
+
+.collect-btn:disabled {
+  cursor: default;
+}
+
+.collect-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .back-btn {

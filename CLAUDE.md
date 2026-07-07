@@ -25,6 +25,17 @@ This repo is indexed by **CodeGraph** (a local code knowledge graph, exposed as 
 
 CLI equivalents (`codegraph explore ...`, `codegraph node ...`) exist for terminal use, but prefer the MCP tools in-session.
 
+## Token Discipline (控制 token 消耗)
+
+The user has flagged excessive token usage. Follow these rules to keep context lean:
+
+- **Query one area with `codegraph_explore` only once.** It returns the *entire* verbatim source of matched files (a big file's full CSS/body gets dumped every call), so re-querying the same files re-bills that source. If a file/symbol is already in the conversation, do NOT codegraph or full-Read it again — Edit it directly.
+- **Read big files with `offset`/`limit`**, reading only the ~dozens of lines you'll edit — not the whole file.
+- **Ask all verification questions in one shot.** Don't chase a call chain one hop per query; name all the spanning symbols in a single `codegraph_explore`.
+- **Don't re-Read after an Edit to "verify".** A successful Edit is written; catch syntax errors later via compile/lint, not by re-reading.
+- **When the user names a file/function, go straight there** — skip search/exploration.
+- **Verify cheaply:** backend `python -m py_compile <file>`, frontend `npx eslint <file>` — not a full build.
+
 ## Repository Layout
 
 ```

@@ -49,8 +49,8 @@ def compare_papers_endpoint(body: ComparisonRequest, user_id: str = Depends(get_
     # 校验归属 + 解析状态，并按请求顺序收集结构化信息
     papers_info = []
     for pid in paper_ids:
-        paper = db.query(Paper).filter(Paper.paper_id == pid, Paper.user_id == user_id).first()
-        if not paper:
+        paper = db.query(Paper).filter(Paper.paper_id == pid).first()
+        if not paper or (paper.user_id != user_id and not paper.is_recommended):
             raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": f"论文不存在或无权限: {pid}"}})
         if paper.parse_status != "completed":
             raise HTTPException(400, detail={"error": {"code": "PARSE_NOT_DONE", "message": f"论文尚未完成解析：{paper.title or paper.file_name}"}})
@@ -112,8 +112,8 @@ def generate_report_endpoint(paper_id: str, body: GenerateReportRequest, user_id
     """生成研读报告"""
     db = next(get_db())
 
-    paper = db.query(Paper).filter(Paper.paper_id == paper_id, Paper.user_id == user_id).first()
-    if not paper:
+    paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+    if not paper or (paper.user_id != user_id and not paper.is_recommended):
         raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
     if paper.parse_status != "completed":
         raise HTTPException(400, detail={"error": {"code": "PARSE_NOT_DONE", "message": "论文尚未完成解析，无法生成报告"}})
@@ -179,8 +179,8 @@ def generate_report_stream_endpoint(paper_id: str, body: GenerateReportRequest, 
     """生成研读报告（流式 SSE）：逐字返回，流结束时落库（覆盖式 upsert）"""
     db = next(get_db())
 
-    paper = db.query(Paper).filter(Paper.paper_id == paper_id, Paper.user_id == user_id).first()
-    if not paper:
+    paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+    if not paper or (paper.user_id != user_id and not paper.is_recommended):
         raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
     if paper.parse_status != "completed":
         raise HTTPException(400, detail={"error": {"code": "PARSE_NOT_DONE", "message": "论文尚未完成解析，无法生成报告"}})

@@ -4,6 +4,7 @@
 import os
 import uuid
 import json
+import shutil
 from typing import Optional
 from datetime import datetime
 
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from ..config import UPLOAD_DIR, MAX_UPLOAD_SIZE, SYSTEM_USER_ID
+from ..config import UPLOAD_DIR, VECTOR_DIR, MAX_UPLOAD_SIZE, SYSTEM_USER_ID
 from ..models import get_db, User, Paper, PaperStructuredInfo, Conversation, Message, Chunk, Report
 from .auth import get_current_user
 from .user import _decrypt
@@ -253,6 +254,8 @@ def get_paper(paper_id: str, user_id: str = Depends(get_current_user)):
         raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
 
     result = paper.to_dict()
+    # 归属标识：前端据此决定是否显示「收藏到我的知识库」按钮（他人推荐位论文才显示）
+    result["is_owner"] = (paper.user_id == user_id)
 
     # 附加结构化信息
     info = db.query(PaperStructuredInfo).filter(PaperStructuredInfo.paper_id == paper_id).first()
@@ -295,6 +298,98 @@ def download_paper_pdf(paper_id: str, user_id: str = Depends(get_current_user)):
         media_type="application/pdf",
         filename=paper.file_name or f"{paper_id}.pdf",
     )
+
+
+@router.post("/{paper_id}/collect")
+def collect_paper(paper_id: str, user_id: str = Depends(get_current_user)):
+    """收藏推荐论文到「我的知识库」——各存一份完整副本。
+
+    仅推荐位（is_recommended）且已解析完成的论文可收藏。复制论文行、结构化信息、
+    全部 chunks，并字节级拷贝 PDF 与 FAISS 索引到新 paper_id；不复制原作者的会话/
+    消息/报告。副本挂当前用户名下、is_recommended=False，此后与自己上传的论文一样可
+    问答/看报告/删除，与原推荐位互不影响。纯拷贝、不调 LLM，故无需 API Key。
+    不防重：重复收藏会各存多份（产品选择）。
+    """
+    db = next(get_db())
+    src = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+    # 仅推荐位论文可收藏（也是「他人论文」唯一可读来源）；非推荐/不存在一律 404
+    if not src or not src.is_recommended:
+        raise HTTPException(404, detail={"error": {"code": "PAPER_NOT_FOUND", "message": "论文不存在"}})
+    if src.parse_status != "completed":
+        raise HTTPException(400, detail={"error": {"code": "NOT_COMPLETED", "message": "论文尚未解析完成，暂不可收藏"}})
+
+    new_id = str(uuid.uuid4())
+
+    # 1. 拷贝 PDF：源缺失/拷贝失败都不阻断收藏，file_path 仍指向新路径（文件不存在则
+    #    /download 优雅 404）。绝不回退指向源文件——否则删除副本会误删源推荐论文的 PDF。
+    new_file_path = os.path.join(UPLOAD_DIR, f"{new_id}.pdf")
+    if src.file_path and os.path.exists(src.file_path):
+        try:
+            shutil.copyfile(src.file_path, new_file_path)
+        except OSError as e:
+            logger.warning(f"收藏时拷贝 PDF 失败（忽略，PDF 走兜底）: {e} - {paper_id}")
+
+    # 2. 拷贝 FAISS 索引文件（字节级，向量顺序与源一致）
+    src_index = os.path.join(VECTOR_DIR, f"{paper_id}.index")
+    if os.path.exists(src_index):
+        try:
+            shutil.copyfile(src_index, os.path.join(VECTOR_DIR, f"{new_id}.index"))
+        except OSError as e:
+            logger.warning(f"收藏时拷贝索引失败: {e} - {paper_id}")
+
+    # 3. 新建 Paper 行（挂当前用户，去掉推荐位属性，读状态归零）
+    new_paper = Paper(
+        paper_id=new_id,
+        user_id=user_id,
+        title=src.title,
+        authors=src.authors,
+        file_name=src.file_name,
+        file_size=src.file_size,
+        file_path=new_file_path,
+        parse_status="completed",
+        field=src.field,
+        tags=src.tags,
+        read_status="unread",
+        is_recommended=False,
+        recommend_order=None,
+    )
+    db.add(new_paper)
+
+    # 4. 复制结构化信息（新行、paper_id=new_id）
+    src_info = db.query(PaperStructuredInfo).filter(PaperStructuredInfo.paper_id == paper_id).first()
+    if src_info:
+        db.add(PaperStructuredInfo(
+            paper_id=new_id,
+            research_background=src_info.research_background,
+            research_questions=src_info.research_questions,
+            method_flow=src_info.method_flow,
+            model_algorithm=src_info.model_algorithm,
+            dataset_info=src_info.dataset_info,
+            evaluation_metrics=src_info.evaluation_metrics,
+            experiment_results=src_info.experiment_results,
+            innovations=src_info.innovations,
+            limitations=src_info.limitations,
+            future_work=src_info.future_work,
+            figures_tables=src_info.figures_tables,
+            references=src_info.references,
+            full_text=src_info.full_text,
+            sections=src_info.sections,
+        ))
+
+    # 5. 复制全部 chunks（每行新 chunk_id，保留 page_number/paragraph_index，
+    #    QA/报告读取时按此排序与拷贝的索引位置对齐，检索行为与源库一致）
+    src_chunks = db.query(Chunk).filter(Chunk.paper_id == paper_id).all()
+    for c in src_chunks:
+        db.add(Chunk(
+            paper_id=new_id,
+            section_title=c.section_title,
+            page_number=c.page_number,
+            paragraph_index=c.paragraph_index,
+            content=c.content,
+        ))
+
+    db.commit()
+    return {**new_paper.to_dict(), "collected": True}
 
 
 @router.put("/{paper_id}")
@@ -462,8 +557,10 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
                 db.add(chunk)
             db.commit()
         else:
-            # 建库失败：抽取自动降级为采样模式（chunks_for_db=None），不阻断解析
-            logger.warning(f"知识库构建警告: {kb_result.get('error')}")
+            # 建库失败（多为嵌入模型不可用）：抽取仍降级采样跑完，但没有 chunks/索引的论文
+            # 无法问答/生成报告。ERROR 级日志显著告警，末尾据此标 failed（可 reparse 重试），
+            # 不再静默标 completed 掩盖「已完成却不可用」的状态。
+            logger.error(f"知识库构建失败（论文将标记为 failed，可重新解析）: {kb_result.get('error')} - {paper_id}")
             kb_warning = kb_result.get("error")
 
         # ④ 结构化信息抽取（方案2A：检索式，传入 chunks_data + paper_id；无库时降级采样）
@@ -523,9 +620,14 @@ def _run_parse_pipeline(paper_id: str, user_id: str) -> None:
         except Exception as e:
             logger.warning(f"自动打标失败（不影响解析）: {e}")
 
-        paper.parse_status = "completed"
+        # 建库失败（kb_warning）= 无 chunks/索引，论文不可问答 → 标 failed 而非 completed，
+        # 使其在管理端可见并可通过 reparse 重试；成功则 completed 并清空历史报错。
         if kb_warning:
-            paper.parse_error = f"知识库部分: {kb_warning}"
+            paper.parse_status = "failed"
+            paper.parse_error = f"知识库构建失败，请重新解析: {kb_warning}"
+        else:
+            paper.parse_status = "completed"
+            paper.parse_error = None
         db.commit()
 
     except Exception as e:
