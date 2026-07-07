@@ -28,4 +28,5 @@
 1. 严格按照 JSON 格式输出，不要包含任何其他文本
 2. 如果某些字段无法从论文中提取，请设为空字符串或空数组
 3. authors、keywords、evaluation_metrics、innovations、limitations 必须是数组格式
-4. 使用中文输出
+4. title（论文标题）必须保持原文，不进行翻译。如果论文标题是英文，直接使用英文标题；如果是中文，直接使用中文标题
+5. 使用中文输出（除 title 字段外）

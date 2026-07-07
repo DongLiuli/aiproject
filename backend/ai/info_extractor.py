@@ -152,6 +152,7 @@ def _build_extraction_prompt(full_text: str, sections: List[Dict[str, Any]],
 1. 严格按照 JSON 格式输出，不要包含其他内容
 2. 如果某些字段无法从论文中提取，请设为空字符串或空列表
 3. evaluation_metrics、innovations、limitations、keywords、authors 必须是数组格式
+4. title（论文标题）必须保持原文，不进行翻译。如果论文标题是英文，直接使用英文标题；如果是中文，直接使用中文标题。
 """
     
     # 获取章节摘要
