@@ -28,6 +28,9 @@ class UpdatePaperRequest(BaseModel):
 
 # ========== 接口 ==========
 
+import logging
+logger = logging.getLogger(__name__)
+
 @router.post("/upload")
 async def upload_paper(
     background_tasks: BackgroundTasks,
@@ -37,70 +40,77 @@ async def upload_paper(
     user_id: str = Depends(get_current_user),
 ):
     """上传论文 PDF"""
-    # 1. 校验格式
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, detail={"error": {"code": "NOT_PDF", "message": "请上传 PDF 格式文件"}})
-
-    # 2. 读取内容校验大小
-    content = await file.read()
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(413, detail={"error": {"code": "FILE_TOO_LARGE", "message": "文件大小超过 50MB 限制"}})
-
-    # 3. 前置校验 API Key：未配置则直接拒绝，不落盘、不入库、不起后台任务
-    #    user_id 可能是 JWT 用户 id，也可能是匿名 X-Session-ID，用户行可能不存在 → 同样视为未配置
-    db = next(get_db())
-    user = db.query(User).filter(User.id == user_id).first()
-    api_key = None
-    if user and user.api_key_encrypted:
-        try:
-            api_key = _decrypt(user.api_key_encrypted)
-        except Exception:
-            api_key = None  # 存储的 Key 损坏，按未配置处理
-    if not api_key:
-        raise HTTPException(400, detail={"error": {"code": "API_KEY_NOT_CONFIGURED", "message": "请先在设置页配置 API Key"}})
-
-    # 4. 保存文件
-    paper_id = str(uuid.uuid4())
-    file_path = os.path.join(UPLOAD_DIR, f"{paper_id}.pdf")
-    with open(file_path, "wb") as f:
-        f.write(content)
-
-    # 5. 快速检测 PDF 可读性
     try:
-        import fitz
-        doc = fitz.open(file_path)
-        doc.close()
-    except Exception:
-        os.remove(file_path)
-        raise HTTPException(422, detail={"error": {"code": "PDF_UNREADABLE", "message": "PDF 文件损坏或无法读取，请确认文件完整"}})
+        # 1. 校验格式
+        if not file.filename or not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(400, detail={"error": {"code": "NOT_PDF", "message": "请上传 PDF 格式文件"}})
 
-    # 6. 写入数据库（复用上面已打开的 db 会话）
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
-    paper = Paper(
-        paper_id=paper_id,
-        user_id=user_id,
-        file_name=file.filename,
-        file_size=len(content),
-        file_path=file_path,
-        field=field,
-        tags=tag_list,
-        parse_status="pending",
-    )
-    db.add(paper)
-    db.commit()
+        # 2. 读取内容校验大小
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_SIZE:
+            raise HTTPException(413, detail={"error": {"code": "FILE_TOO_LARGE", "message": "文件大小超过 50MB 限制"}})
 
-    # 7. 触发异步解析
-    background_tasks.add_task(_run_parse_pipeline, paper_id, user_id)
+        # 3. 前置校验 API Key：未配置则直接拒绝，不落盘、不入库、不起后台任务
+        #    user_id 可能是 JWT 用户 id，也可能是匿名 X-Session-ID，用户行可能不存在 → 同样视为未配置
+        db = next(get_db())
+        user = db.query(User).filter(User.id == user_id).first()
+        api_key = None
+        if user and user.api_key_encrypted:
+            try:
+                api_key = _decrypt(user.api_key_encrypted)
+            except Exception:
+                api_key = None  # 存储的 Key 损坏，按未配置处理
+        if not api_key:
+            raise HTTPException(400, detail={"error": {"code": "API_KEY_NOT_CONFIGURED", "message": "请先在设置页配置 API Key"}})
 
-    return {
-        "paper_id": paper_id,
-        "title": file.filename,
-        "file_size": len(content),
-        "upload_time": paper.upload_time.isoformat(),
-        "parse_status": "pending",
-        "field": field,
-        "tags": tag_list,
-    }
+        # 4. 保存文件
+        paper_id = str(uuid.uuid4())
+        file_path = os.path.join(UPLOAD_DIR, f"{paper_id}.pdf")
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        # 5. 快速检测 PDF 可读性
+        try:
+            import fitz
+            doc = fitz.open(file_path)
+            doc.close()
+        except Exception as e:
+            logger.error(f"PDF 检测失败: {e}")
+            os.remove(file_path)
+            raise HTTPException(422, detail={"error": {"code": "PDF_UNREADABLE", "message": "PDF 文件损坏或无法读取，请确认文件完整"}})
+
+        # 6. 写入数据库（复用上面已打开的 db 会话）
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+        paper = Paper(
+            paper_id=paper_id,
+            user_id=user_id,
+            file_name=file.filename,
+            file_size=len(content),
+            file_path=file_path,
+            field=field,
+            tags=tag_list,
+            parse_status="pending",
+        )
+        db.add(paper)
+        db.commit()
+
+        # 7. 触发异步解析
+        background_tasks.add_task(_run_parse_pipeline, paper_id, user_id)
+
+        return {
+            "paper_id": paper_id,
+            "title": file.filename,
+            "file_size": len(content),
+            "upload_time": paper.upload_time.isoformat(),
+            "parse_status": "pending",
+            "field": field,
+            "tags": tag_list,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"上传接口异常: {e}")
+        raise HTTPException(500, detail={"error": {"code": "INTERNAL_ERROR", "message": f"服务器内部错误: {str(e)}"}})
 
 
 @router.get("")
