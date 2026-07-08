@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePapersStore } from '@/stores/papers'
 import {
@@ -32,12 +32,25 @@ function handleScrollToSection(pageNumber, sectionTitle) {
   }
 }
 
-onMounted(async () => {
-  if (!paperId.value) return
+async function loadPaper(id) {
+  if (!id) return
   try {
-    await papersStore.getPaper(paperId.value)
+    await papersStore.getPaper(id)
   } catch (err) {
     console.error('Failed to load paper:', err)
+  }
+}
+
+onMounted(() => loadPaper(paperId.value))
+
+// 同一路由内切换论文（如收藏后「去查看」跳到新 paper_id）时组件实例被复用、
+// onMounted 不会重跑，需监听 id 变化重新拉取；否则页面停留在旧论文/点了没反应。
+watch(paperId, (newId, oldId) => {
+  if (newId && newId !== oldId) {
+    // 重置本地收藏态，避免看新论文时残留上一篇的「已收藏/去查看」
+    collectedId.value = null
+    collectMsg.value = ''
+    loadPaper(newId)
   }
 })
 function goBack() {

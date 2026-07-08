@@ -172,7 +172,7 @@ function formatDate(dateStr) {
                     <span class="source-page">{{ source.page ? `第 ${source.page} 页` : '' }}</span>
                     <span v-if="source.section" class="source-section">{{ source.section }}</span>
                   </button>
-                  <span v-if="source.text" class="source-snippet">{{ source.text.substring(0, 80) }}...</span>
+                  <span v-if="source.snippet" class="source-snippet">{{ source.snippet.substring(0, 80) }}...</span>
                 </li>
               </ul>
             </div>

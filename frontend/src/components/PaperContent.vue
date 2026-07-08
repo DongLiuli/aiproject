@@ -110,13 +110,23 @@ async function fetchFromBackend(paperId) {
 
 async function fetchPaperDetails(paperId) {
   try {
-    const res = await papersAPI.getPaper(paperId)
-    const data = res.data
+    // api 实例装了响应拦截器 (response) => response.data，故这里 res 已是响应体本身
+    const data = await papersAPI.get(paperId)
     if (data.full_text) {
       fullText.value = data.full_text
     }
     if (data.sections) {
-      sections.value = Array.isArray(data.sections) ? data.sections : JSON.parse(data.sections)
+      // 后端存储的章节结构是 { title, content, page_start, page_end }，
+      // 而文本视图渲染的是 { title, level, page_number, paragraphs:[{text}] }。
+      // 这里做一次归一化：content→paragraphs、page_start→page_number，
+      // 同时兼容未来可能直接返回 paragraphs/page_number 的结构。
+      const raw = Array.isArray(data.sections) ? data.sections : JSON.parse(data.sections)
+      sections.value = (raw || []).map((s) => ({
+        title: s.title,
+        level: s.level,
+        page_number: s.page_number ?? s.page_start,
+        paragraphs: s.paragraphs ?? (s.content ? [{ text: s.content }] : []),
+      }))
       expandedSections.value = sections.value.map((_, i) => i)
     }
   } catch (err) {
@@ -218,24 +228,20 @@ function showToastMessage(message) {
 function scrollToSection(pageNumber, sectionTitle) {
   viewMode.value = 'text'
   setTimeout(() => {
+    // 先按章节标题定位；标题匹配不到再回退到页码定位（不再用 else-if 把兜底废掉）
+    let idx = -1
     if (sectionTitle) {
-      const idx = sections.value.findIndex(s => s.title.includes(sectionTitle))
-      if (idx > -1) {
-        expandedSections.value.push(idx)
-        setTimeout(() => {
-          const el = document.getElementById(`section-${idx}`)
-          if (el) el.scrollIntoView({ behavior: 'smooth' })
-        }, 100)
-      }
-    } else if (pageNumber) {
-      const idx = sections.value.findIndex(s => s.page_number === pageNumber)
-      if (idx > -1) {
-        expandedSections.value.push(idx)
-        setTimeout(() => {
-          const el = document.getElementById(`section-${idx}`)
-          if (el) el.scrollIntoView({ behavior: 'smooth' })
-        }, 100)
-      }
+      idx = sections.value.findIndex(s => (s.title || '').includes(sectionTitle))
+    }
+    if (idx < 0 && pageNumber) {
+      idx = sections.value.findIndex(s => s.page_number === pageNumber)
+    }
+    if (idx > -1) {
+      if (!expandedSections.value.includes(idx)) expandedSections.value.push(idx)
+      setTimeout(() => {
+        const el = document.getElementById(`section-${idx}`)
+        if (el) el.scrollIntoView({ behavior: 'smooth' })
+      }, 100)
     }
   }, 100)
 }
