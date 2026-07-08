@@ -128,9 +128,39 @@ log_success "Node.js安装完成"
 node --version
 
 # ============================================
-# Step 5: 安装Nginx
+# Step 5: 安装MySQL
 # ============================================
-log_info "Step 5/10: 安装Nginx..."
+log_info "Step 5/11: 安装MySQL..."
+if command -v mysql &> /dev/null; then
+    log_warn "MySQL已安装，跳过"
+else
+    if command -v yum &> /dev/null; then
+        yum install -y mysql-community-server
+        systemctl start mysqld
+        systemctl enable mysqld
+    elif command -v apt &> /dev/null; then
+        apt install -y mysql-server
+        systemctl start mysql
+        systemctl enable mysql
+    else
+        log_error "无法安装MySQL"
+        exit 1
+    fi
+fi
+
+# 创建数据库和用户
+log_info "创建数据库..."
+mysql -u root -e "CREATE DATABASE IF NOT EXISTS literature_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -u root -e "CREATE USER IF NOT EXISTS 'lit_user'@'localhost' IDENTIFIED BY 'lit_password';"
+mysql -u root -e "GRANT ALL PRIVILEGES ON literature_db.* TO 'lit_user'@'localhost';"
+mysql -u root -e "FLUSH PRIVILEGES;"
+log_success "MySQL安装完成"
+mysql --version
+
+# ============================================
+# Step 6: 安装Nginx
+# ============================================
+log_info "Step 6/11: 安装Nginx..."
 if command -v nginx &> /dev/null; then
     log_warn "Nginx已安装，跳过"
 else
@@ -147,9 +177,9 @@ log_success "Nginx安装完成"
 nginx -v
 
 # ============================================
-# Step 6: 克隆项目代码
+# Step 7: 克隆项目代码
 # ============================================
-log_info "Step 6/10: 克隆项目代码..."
+log_info "Step 7/11: 克隆项目代码..."
 mkdir -p /opt/aiproject
 chown -R $USERNAME:$USERNAME /opt/aiproject
 
@@ -163,35 +193,46 @@ fi
 log_success "项目代码克隆完成"
 
 # ============================================
-# Step 7: 安装后端依赖
+# Step 8: 安装后端依赖
 # ============================================
-log_info "Step 7/10: 安装后端依赖..."
+log_info "Step 8/11: 安装后端依赖..."
 cd /opt/aiproject/backend
 pip3.10 install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 log_success "后端依赖安装完成"
 
 # ============================================
-# Step 8: 安装前端依赖并打包
+# Step 9: 创建数据库配置文件
 # ============================================
-log_info "Step 8/10: 安装前端依赖并打包..."
+log_info "Step 9/11: 创建数据库配置文件..."
+cat > /opt/aiproject/backend/db_config.json <<EOF
+{
+    "DATABASE_URL": "mysql+pymysql://lit_user:lit_password@localhost:3306/literature_db?charset=utf8mb4"
+}
+EOF
+log_success "数据库配置文件创建完成"
+
+# ============================================
+# Step 10: 安装前端依赖并打包
+# ============================================
+log_info "Step 10/11: 安装前端依赖并打包..."
 cd /opt/aiproject/frontend
 npm install
 npm run build
 log_success "前端构建完成"
 
 # ============================================
-# Step 9: 创建数据目录
+# Step 11: 创建数据目录
 # ============================================
-log_info "Step 9/10: 创建数据目录..."
+log_info "Step 11/11: 创建数据目录..."
 cd /opt/aiproject/backend
 mkdir -p data/uploads data/faiss_index data/report_cache
 chown -R $USERNAME:$USERNAME data
 log_success "数据目录创建完成"
 
 # ============================================
-# Step 10: 配置Nginx
+# Step 12: 配置Nginx
 # ============================================
-log_info "Step 10/10: 配置Nginx..."
+log_info "Step 12/12: 配置Nginx..."
 
 # 创建Nginx配置文件
 cat > /etc/nginx/conf.d/paper-system.conf <<EOF
@@ -243,9 +284,9 @@ systemctl enable nginx
 log_success "Nginx配置完成"
 
 # ============================================
-# Step 11: 配置Systemd服务
+# Step 13: 配置Systemd服务
 # ============================================
-log_info "Step 11/11: 配置Systemd服务..."
+log_info "Step 13/13: 配置Systemd服务..."
 
 # 创建Systemd服务文件
 cat > /etc/systemd/system/paper-system.service <<EOF
@@ -280,9 +321,9 @@ systemctl enable paper-system
 log_success "Systemd服务配置完成"
 
 # ============================================
-# Step 12: 配置防火墙
+# Step 14: 配置防火墙
 # ============================================
-log_info "Step 12/12: 配置防火墙..."
+log_info "Step 14/14: 配置防火墙..."
 if command -v firewall-cmd &> /dev/null; then
     firewall-cmd --add-port=80/tcp --permanent || true
     firewall-cmd --reload || true
