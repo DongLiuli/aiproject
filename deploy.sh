@@ -110,14 +110,22 @@ log_success "Python 3.10安装完成"
 python3.10 --version
 
 # ============================================
-# Step 4: 安装Node.js 18
+# Step 4: 安装Node.js 18（使用阿里云镜像）
 # ============================================
 log_info "Step 4/10: 安装Node.js 18..."
 if command -v node &> /dev/null && node --version | grep -q "v18"; then
     log_warn "Node.js 18已安装，跳过"
 else
-    curl -sL https://rpm.nodesource.com/setup_18.x | bash -
-    yum install -y nodejs
+    if command -v yum &> /dev/null; then
+        curl -sL https://mirrors.aliyun.com/nodesource/setup_18.x | bash -
+        yum install -y nodejs
+    elif command -v apt &> /dev/null; then
+        curl -sL https://mirrors.aliyun.com/nodesource/setup_18.x | bash -
+        apt install -y nodejs
+    else
+        log_error "无法安装Node.js"
+        exit 1
+    fi
 fi
 
 if ! command -v node &> /dev/null; then
@@ -212,10 +220,11 @@ EOF
 log_success "数据库配置文件创建完成"
 
 # ============================================
-# Step 10: 安装前端依赖并打包
+# Step 10: 安装前端依赖并打包（使用国内镜像）
 # ============================================
 log_info "Step 10/11: 安装前端依赖并打包..."
 cd /opt/aiproject/frontend
+npm config set registry https://registry.npmmirror.com/
 npm install
 npm run build
 log_success "前端构建完成"
